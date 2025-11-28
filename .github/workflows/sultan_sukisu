@@ -7,8 +7,6 @@ permissions:
 on:
   workflow_dispatch:
   push:
-    branches:
-      - sukisu-only   # hapus bagian ini kalau tidak mau branch khusus
     paths-ignore:
       - "README.md"
 
