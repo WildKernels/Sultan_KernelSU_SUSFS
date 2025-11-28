@@ -1,7 +1,7 @@
 name: Sultan Zuma SukiSU only
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 on:
@@ -76,7 +76,7 @@ jobs:
           git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" AK3
           echo "ak3_dir=$PWD/AK3" >> $GITHUB_ENV
 
-          # Optional SukiSU patch repo (kept for future use)
+          # Optional SukiSU extra patches repo
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git suki_patches
           echo "suki_dir=$PWD/suki_patches" >> $GITHUB_ENV
 
@@ -135,7 +135,7 @@ jobs:
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
 
       # ------------------------------------------------------------
-      # KernelSU - SukiSU variant (no extra SUSFS patch here)
+      # KernelSU - SukiSU variant (no SUSFS extra patch)
       # ------------------------------------------------------------
       - name: Add KernelSU (SukiSU)
         run: |
@@ -163,10 +163,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ${{ env.codename }}-SukiSU-ccache-${{ github.sha }}
+          key: zuma-SukiSU-ccache-${{ github.sha }}
           restore-keys: |
-            ${{ env.codename }}-SukiSU-ccache-
-            ${{ env.codename }}-
+            zuma-SukiSU-ccache-
+            zuma-
 
       # ------------------------------------------------------------
       # Build
@@ -227,82 +227,8 @@ jobs:
           zip -r "../$ZIP_NAME" ./*
           cd ..
 
-          echo "ARTIFACT_PATH=$PWD/$ZIP_NAME" >> $GITHUB_ENV
-          echo "Artifact at: $PWD/$ZIP_NAME"
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.zip_name }}
-          path: ${{ env.ARTIFACT_PATH }}
-
-  # ==================================================================
-  # Release job - creates GitHub Release and attaches the SukiSU zip
-  # ==================================================================
-  release:
-    needs: sukisu-build
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./downloaded-artifacts
-
-      - name: Generate tag name
-        id: tagger
-        run: |
-          set -e
-          DATE="$(date +'%Y.%m.%d')"
-          BASE="SukiSU-${DATE}"
-
-          echo "Base tag: $BASE"
-
-          LAST_TAG=$(git tag --list "${BASE}-r*" | sort -V | tail -n1 || true)
-          echo "Last tag for today: $LAST_TAG"
-
-          if [ -z "$LAST_TAG" ]; then
-            TAG="${BASE}-r1"
-          else
-            NUM=$(echo "$LAST_TAG" | sed -E 's/.*-r([0-9]+)$/\1/')
-            NUM=$((NUM+1))
-            TAG="${BASE}-r${NUM}"
-          fi
-
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Using tag: $TAG"
-
-      - name: Generate release body
-        run: |
-          cat << 'EOF' > release_body.md
-Sultan Kernel (zuma) with SukiSU Ultra
-
-- Base source: kerneltoast/android_kernel_google_zuma (Sultan)
-- Variant: SukiSU only (no extra SUSFS patch from susfs4ksu)
-- Includes:
-  - KernelSU (SukiSU Ultra, manual hook)
-  - Mountify-friendly TMPFS + IPSet + BBR networking configs
-  - Baseband-guard (BBG) integrated
-
-Notes:
-- Make sure your device is on a compatible zuma / Android 14 build.
-- Bootloader unlock is required for flashing custom kernels.
-EOF
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.TAG }}
-          name: ${{ env.TAG }}
-          body_path: release_body.md
-          files: downloaded-artifacts/**/*
-
+          path: "*.zip"
