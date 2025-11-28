@@ -32,43 +32,45 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # We keep SUSFS on/off in matrix and control per-variant via "exclude"
         susfs: [false, true]
+
         build:
-          # KernelSU-Next (KSUN)
+          # KSUN -> SUSFS ONLY
           - type: KSUN
             ksu: true
             repo: "KernelSU-Next/KernelSU-Next"
             folder: "KernelSU-Next"
             branch: "next"
-            exclude: susfs            # only non-SUSFS build
+            exclude: susfsless           # do NOT run when susfs == false
             ak3_suffix: "_KSUNext"
 
-          # RKSU
+          # RKSU -> SUSFS ONLY
           - type: RKSU
             ksu: true
             repo: "rsuntk/KernelSU"
             folder: "KernelSU"
             branch: "main"
             susfs_branch: "susfs-main"
-            exclude: susfs           # only non-SUSFS build
+            exclude: susfsless           # do NOT run when susfs == false
             ak3_suffix: "_RKSU"
 
-          # SukiSU Ultra (SUSFS-main branch)
+          # SukiSU -> NON-SUSFS ONLY (your exception)
           - type: SukiSU
             ksu: true
             repo: "SukiSU-Ultra/SukiSU-Ultra"
             folder: "KernelSU"
             branch: "susfs-main"
-            exclude: susfsless       # only SUSFS build
+            exclude: susfs               # do NOT run when susfs == true
             ak3_suffix: "_SukiSU"
 
-          # xxKSU (backslashxx) – plain, no extra James patch
+          # xxKSU -> SUSFS ONLY
           - type: xxKSU
             ksu: true
             repo: "backslashxx/KernelSU"
             folder: "KernelSU"
             branch: "master"
-            exclude: susfs           # only non-SUSFS build
+            exclude: susfsless           # do NOT run when susfs == false
             ak3_suffix: "_xxKSU"
 
         kernel:
@@ -80,13 +82,14 @@ jobs:
             local_version: "-android14-11-gd7dac4b14270-ab12946699"
             build_date: "Sun Apr 20 04:20:00 UTC 2025"
 
+        # Use build.exclude to filter combinations
         exclude:
           - build:
               exclude: susfs
-            susfs: true
+            susfs: true       # skip variants that say "exclude: susfs" when susfs == true
           - build:
               exclude: susfsless
-            susfs: false
+            susfs: false      # skip variants that say "exclude: susfsless" when susfs == false
 
     steps:
       - name: Download and extract GCC 14.2.0 toolchain
@@ -96,8 +99,8 @@ jobs:
           wget https://www.kernel.org/pub/tools/crosstool/files/bin/x86_64/14.2.0/x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz -O toolchain.tar.gz
           echo "Extracting toolchain..."
           gunzip toolchain.tar.gz
-          tar -xf toolchain.tar
-          TOOLCHAIN_DIR=$(tar -tf toolchain.tar | head -1 | cut -d/ -f1)
+          tar -xf x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar
+          TOOLCHAIN_DIR=$(tar -tf x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar | head -1 | cut -d/ -f1)
           echo "TOOLCHAIN_DIR=$GITHUB_WORKSPACE/$TOOLCHAIN_DIR" >> $GITHUB_ENV
           echo "Toolchain directory: $GITHUB_WORKSPACE/$TOOLCHAIN_DIR"
 
@@ -127,7 +130,7 @@ jobs:
           git clone --depth=1 https://github.com/WildKernels/kernel_patches.git james_patches
           echo "james_dir=$PWD/james_patches" >> $GITHUB_ENV
 
-          # SukiSU extra patches (if needed later)
+          # SukiSU extra patches
           git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git suki_patches
           echo "suki_dir=$PWD/suki_patches" >> $GITHUB_ENV
 
@@ -135,12 +138,12 @@ jobs:
           git clone --depth=1 https://github.com/kerneltoast/${{ matrix.kernel.repo }} sultan
           echo "kernel_dir=$PWD/sultan" >> $GITHUB_ENV
 
-          # Decide KernelSU repo/branch based on variant
+          # Decide KernelSU repo/branch per variant
           if [[ "${{ matrix.build.type }}" == "KSUN" ]]; then
             echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
             echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
-            if [[ "${{ matrix.susfs }}" == "true" ]]; then
+            if [[ "${{ matrix.susfs }}" == "true" && -n "${{ matrix.build.susfs_branch }}" ]]; then
               echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
               echo "ksu_branch=${{ matrix.build.susfs_branch }}" >> $GITHUB_ENV
             else
@@ -220,13 +223,13 @@ jobs:
           echo "Integrating KernelSU variant: ${{ matrix.build.type }} (repo: ${{ env.ksu_repo }}, branch: ${{ env.ksu_branch }})"
           curl -LSs "https://raw.githubusercontent.com/${{ env.ksu_repo }}/${{ env.ksu_branch }}/kernel/setup.sh" | bash -s "${{ env.ksu_branch }}"
 
-          # Per-variant extra hook patches (only patches we know exist)
+          # Variant-specific extra hooks using only existing patches
           if [[ "${{ matrix.build.type }}" == "KSUN" ]]; then
-            echo "Applying syscall hook patch from James (Sultan)..."
+            echo "Applying KSUN syscall hook patch from James (Sultan)..."
             patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
           elif [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
-            if [[ "${{ matrix.susfs }}" != "true" ]]; then
-              echo "Applying RKSU syscall hooks (non-SUSFS)..."
+            if [[ "${{ matrix.susfs }}" == "true" ]]; then
+              echo "Applying RKSU syscall hooks (SUSFS)..."
               patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
             fi
           elif [[ "${{ matrix.build.type }}" == "SukiSU" ]]; then
@@ -240,7 +243,7 @@ jobs:
           echo "CONFIG_KSU=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           echo "CONFIG_KSU_KPROBES_HOOK=n" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
 
-          # RKSU & SukiSU manual hook configs (if needed)
+          # RKSU & SukiSU manual hook configs
           if [[ "${{ matrix.build.type }}" == "RKSU" || "${{ matrix.build.type }}" == "SukiSU" ]]; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           fi
