@@ -1,7 +1,7 @@
 name: Sultan Zuma SukiSU only
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 on:
@@ -72,7 +72,7 @@ jobs:
           ccache --set-config=compression=true
           echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
-          # AnyKernel3
+          # AnyKernel3 (Sultan zuma branch)
           git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" AK3
           echo "ak3_dir=$PWD/AK3" >> $GITHUB_ENV
 
@@ -84,8 +84,8 @@ jobs:
           git clone --depth=1 https://github.com/kerneltoast/android_kernel_google_zuma sultan
           echo "kernel_dir=$PWD/sultan" >> $GITHUB_ENV
 
-          date=$(date +"%d.%m.%Y")
-          zip_name="$date-${CODENAME}_A16_Sultan-SukiSU-${{ github.run_number }}"
+          date=$(date +"%Y.%m.%d")
+          zip_name="${date}-${CODENAME}_A16_Sultan-SukiSU-${GITHUB_RUN_NUMBER}"
           echo "zip_name=$zip_name" >> $GITHUB_ENV
           echo "codename=$CODENAME" >> $GITHUB_ENV
           echo "defconfig=$DEFCONFIG" >> $GITHUB_ENV
@@ -145,6 +145,8 @@ jobs:
           echo "Integrating SukiSU from SukiSU-Ultra/SukiSU-Ultra (branch susfs-main)"
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/susfs-main/kernel/setup.sh" | bash -s susfs-main
 
+          DEFCONFIG_PATH="arch/arm64/configs/${{ env.defconfig }}"
+
           # KernelSU base configs
           {
             echo "CONFIG_KSU=y"
@@ -153,7 +155,7 @@ jobs:
             echo "CONFIG_KSU_MANUAL_SU=n"
             echo "CONFIG_COMPAT=y"
             echo "CONFIG_ZRAM_GS_WRITEBACK=y"
-          } >> "arch/arm64/configs/${{ env.defconfig }}"
+          } >> "$DEFCONFIG_PATH"
 
       # ------------------------------------------------------------
       # ccache
@@ -186,6 +188,10 @@ jobs:
           echo "Starting kernel build..."
           make O=out CROSS_COMPILE="ccache ${TOOLCHAIN}" CC="ccache ${TOOLCHAIN}gcc" -j"$(nproc --all)"
 
+          echo "Built files under:"
+          ls -R out/arch/arm64/boot || true
+          ls -R out/google-devices || true
+
       # ------------------------------------------------------------
       # AnyKernel3 packaging
       # ------------------------------------------------------------
@@ -195,10 +201,21 @@ jobs:
           cd "${{ env.kernel_dir }}"
 
           echo "Copying Image.lz4 and DTB for zuma..."
-          cp ./out/arch/arm64/boot/Image.lz4 "${{ env.ak3_dir }}/Image.lz4"
-          if [ -d "./out/google-devices/${{ env.codename }}/dts" ]; then
-            cat ./out/google-devices/${{ env.codename }}/dts/*.dtb > "${{ env.ak3_dir }}/dtb"
+          IMG="./out/arch/arm64/boot/Image.lz4"
+          if [ ! -f "$IMG" ]; then
+            echo "ERROR: Image.lz4 not found at $IMG"
+            exit 1
           fi
+
+          DTB_DIR="./out/google-devices/${{ env.codename }}/dts"
+          if [ ! -d "$DTB_DIR" ]; then
+            echo "ERROR: DTB directory not found: $DTB_DIR"
+            ls -R ./out/google-devices || true
+            exit 1
+          fi
+
+          cp "$IMG" "${{ env.ak3_dir }}/Image.lz4"
+          cat "$DTB_DIR"/*.dtb > "${{ env.ak3_dir }}/dtb"
 
       - name: Create flashable zip
         run: |
@@ -207,13 +224,86 @@ jobs:
 
           cd AK3
           ZIP_NAME="${{ env.zip_name }}.zip"
-          echo "Creating AnyKernel3 zip: $ZIP_NAME"
+          echo "Creating zip: $ZIP_NAME"
           zip -r "../$ZIP_NAME" ./*
-          cd ..
 
-      - name: Upload build artifacts
+          cd ..
+          # Save absolute path for upload + release
+          echo "ARTIFACT_PATH=$PWD/$ZIP_NAME" >> $GITHUB_ENV
+          echo "Artifact at: $PWD/$ZIP_NAME"
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.zip_name }}
-          path: |
-            *.zip
+          path: ${{ env.ARTIFACT_PATH }}
+
+  # ==================================================================
+  # Release job - creates GitHub Release and attaches the SukiSU zip
+  # ==================================================================
+  release:
+    needs: sukisu-build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded-artifacts
+
+      - name: Generate tag name
+        id: tagger
+        run: |
+          set -e
+          DATE="$(date +'%Y.%m.%d')"
+          BASE="SukiSU-${DATE}"
+
+          echo "Base tag: $BASE"
+
+          # List previous tags for this day
+          LAST_TAG=$(git tag --list "${BASE}-r*" | sort -V | tail -n1 || true)
+          echo "Last tag for today: $LAST_TAG"
+
+          if [ -z "$LAST_TAG" ]; then
+            TAG="${BASE}-r1"
+          else
+            NUM=$(echo "$LAST_TAG" | sed -E 's/.*-r([0-9]+)$/\1/')
+            NUM=$((NUM+1))
+            TAG="${BASE}-r${NUM}"
+          fi
+
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using tag: $TAG"
+
+      - name: Generate release body
+        run: |
+          cat << 'EOF' > release_body.md
+Sultan Kernel (zuma) with SukiSU Ultra
+
+- Source: kerneltoast/android_kernel_google_zuma
+- Variant: SukiSU only (no SUSFS integrated)
+- Includes:
+  - KernelSU (SukiSU Ultra, manual hook)
+  - Mountify-friendly TMPFS + IPSet + BBR networking configs
+  - Baseband-guard integrated (BBG)
+
+Please make sure:
+- Your device is on a compatible Android release (A14 / zuma-based Pixels).
+- You understand the risks of custom kernels and bootloader state.
+EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          body_path: release_body.md
+          files: downloaded-artifacts/**/*
+
