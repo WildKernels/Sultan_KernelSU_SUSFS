@@ -297,7 +297,7 @@ jobs:
           } >> "$DEFCONFIG_PATH"
 
           # RKSU usually uses manual hook
-          if [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
+          if [[ "${{ matrix.build.type }}" == "RKSU" || "${{ matrix.build.type }}" == "KSUN" ]]; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG_PATH"
           fi
 
