@@ -4,20 +4,32 @@ permissions:
   actions: write   # Allows triggering actions
 
 on:
-  workflow_call: # This allows this workflow to be called from another workflow
+  workflow_dispatch:        # manual run from Actions tab
+  push:                     # auto run on push
+    paths-ignore:
+      - "README.md"
+  pull_request:             # auto run on PR
+    paths-ignore:
+      - "README.md"
+  workflow_call:            # can still be reusable from other workflows
     inputs:
       codename:
-        required: true
+        required: false
         type: string
+        default: "zuma"
       repo:
-        required: true
+        required: false
         type: string
+        default: "android_kernel_google_zuma"
       android_version:
-        required: true
+        required: false
         type: string
+        default: "android14"
       kernel_version:
-        required: true
+        required: false
         type: string
+        default: "6.1"
+
   
 jobs:
   build-kernel-sultan-kernelsu-susfs:
