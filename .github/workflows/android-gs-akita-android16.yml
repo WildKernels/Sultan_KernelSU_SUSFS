@@ -97,7 +97,7 @@ jobs:
           echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
       # ------------------------------------------------------------------
-      # Toolchain - GCC 14.2.0 nolibc (aarch64)
+      # Toolchain - GCC 14.2.0 nolibc (aarch64) with auto-detect
       # ------------------------------------------------------------------
       - name: Download and extract GCC 14.2.0 toolchain
         run: |
@@ -110,21 +110,35 @@ jobs:
             https://www.kernel.org/pub/tools/crosstool/files/bin/x86_64/14.2.0/x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz
 
           echo "Extracting toolchain..."
-          tar -xzf toolchain.tar.gz
+          mkdir -p toolchain_raw
+          tar -xzf toolchain.tar.gz -C toolchain_raw
 
-          TOOLBIN="$GITHUB_WORKSPACE/toolchain/x86_64-gcc-14.2.0-nolibc/aarch64-linux/bin"
+          echo "Searching for aarch64-linux-gcc* inside extracted toolchain..."
+          GCC_CANDIDATE=$(find toolchain_raw -maxdepth 7 -type f -name 'aarch64-linux-gcc*' | head -n1 || true)
 
-          if [ ! -x "$TOOLBIN/aarch64-linux-gcc" ]; then
-            echo "ERROR: aarch64-linux-gcc not found in $TOOLBIN"
-            ls -R "$GITHUB_WORKSPACE/toolchain"
+          if [ -z "$GCC_CANDIDATE" ]; then
+            echo "ERROR: Could not find any aarch64-linux-gcc* binary inside toolchain_raw."
+            find toolchain_raw -maxdepth 6 -type f | head -n 80 || true
             exit 1
           fi
 
-          echo "CROSS_COMPILE=$TOOLBIN/aarch64-linux-" >> $GITHUB_ENV
-          echo "CC=$TOOLBIN/aarch64-linux-gcc" >> $GITHUB_ENV
+          echo "Found GCC candidate: $GCC_CANDIDATE"
 
-          echo "Toolchain files:"
-          ls -R "$GITHUB_WORKSPACE/toolchain"
+          TOOLCHAIN_BIN_DIR=$(cd "$(dirname "$GCC_CANDIDATE")" && pwd)
+          echo "TOOLCHAIN_BIN_DIR=$TOOLCHAIN_BIN_DIR"
+
+          # Pastikan ada aarch64-linux-gcc, kalau namanya beda buat symlink
+          GCC_BASENAME=$(basename "$GCC_CANDIDATE")
+          if [ "$GCC_BASENAME" != "aarch64-linux-gcc" ]; then
+            echo "Creating symlink aarch64-linux-gcc -> $GCC_BASENAME"
+            ln -sf "$GCC_BASENAME" "$TOOLCHAIN_BIN_DIR/aarch64-linux-gcc"
+          fi
+
+          echo "CROSS_COMPILE=${TOOLCHAIN_BIN_DIR}/aarch64-linux-" >> $GITHUB_ENV
+          echo "CC=${TOOLCHAIN_BIN_DIR}/aarch64-linux-gcc" >> $GITHUB_ENV
+
+          echo "Toolchain bin dir content:"
+          ls -l "$TOOLCHAIN_BIN_DIR"
 
       # ------------------------------------------------------------------
       # Clone repos: AnyKernel3, SUSFS, James patches, AOSP zuma kernel
@@ -139,7 +153,6 @@ jobs:
           ANDROID_VERSION="${{ github.event.inputs.android_version }}"
           KERNEL_VERSION="${{ github.event.inputs.kernel_version }}"
           KBRANCH="${{ github.event.inputs.kernel_branch }}"
-
           [ -z "$KBRANCH" ] && KBRANCH="android-gs-akita-android16"
 
           SUSFS_BRANCH="gki-${ANDROID_VERSION}-${KERNEL_VERSION}"
@@ -288,7 +301,7 @@ jobs:
 
           if [[ "${{ matrix.build.type }}" == "KSUN" || "${{ matrix.build.type }}" == "RKSU" ]]; then
             echo "Applying syscall_hooks patch from WildKernels..."
-            patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
+            patch -p1 -F 3 < "${{ env.james_dir }}/sultan/sys.c_fix.patch" || true
           else
             echo "xxKSU: no external syscall patch applied."
           fi
