@@ -15,6 +15,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout (optional, kalau repo ini butuh)
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # Install dependencies
+      # ------------------------------------------------------------
+      - name: Install build dependencies
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex build-essential \
+            libssl-dev libelf-dev libncurses5-dev \
+            ccache lz4 zip git wget
+
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
       # ------------------------------------------------------------
       # Toolchain
       # ------------------------------------------------------------
@@ -65,23 +84,16 @@ jobs:
 
           ANYKERNEL_BRANCH="sultan-${CODENAME}"
 
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ccache lz4 zip git wget
-
-          ccache --max-size=2G
-          ccache --set-config=compression=true
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-
           # AnyKernel3 (Sultan zuma branch)
-          git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" AK3
+          git clone --depth 1 --branch "$ANYKERNEL_BRANCH" https://github.com/TheWildJames/AnyKernel3.git AK3
           echo "ak3_dir=$PWD/AK3" >> $GITHUB_ENV
 
           # Optional SukiSU extra patches repo
-          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git suki_patches
+          git clone --depth 1 https://github.com/SukiSU-Ultra/SukiSU_patch.git suki_patches
           echo "suki_dir=$PWD/suki_patches" >> $GITHUB_ENV
 
           # Sultan kernel source (kerneltoast)
-          git clone --depth=1 https://github.com/kerneltoast/android_kernel_google_zuma sultan
+          git clone --depth 1 https://github.com/kerneltoast/android_kernel_google_zuma sultan
           echo "kernel_dir=$PWD/sultan" >> $GITHUB_ENV
 
           date=$(date +"%Y.%m.%d")
@@ -176,16 +188,18 @@ jobs:
           set -e
           cd "${{ env.kernel_dir }}"
 
+          export ARCH=arm64
           export KBUILD_BUILD_USER="ctrlpaste"
           export KBUILD_BUILD_HOST="Github"
 
           TOOLCHAIN="${TOOLCHAIN_BIN_DIR}/aarch64-linux-"
 
           echo "Using defconfig: ${{ env.defconfig }}"
-          make O=out CROSS_COMPILE="${TOOLCHAIN}" CC="${TOOLCHAIN}gcc" -j"$(nproc --all)" "${{ env.defconfig }}"
+          # defconfig
+          make ARCH=$ARCH O=out CROSS_COMPILE="${TOOLCHAIN}" CC="${TOOLCHAIN}gcc" -j"$(nproc --all)" "${{ env.defconfig }}"
 
           echo "Starting kernel build..."
-          make O=out CROSS_COMPILE="ccache ${TOOLCHAIN}" CC="ccache ${TOOLCHAIN}gcc" -j"$(nproc --all)"
+          make ARCH=$ARCH O=out CROSS_COMPILE="ccache ${TOOLCHAIN}" CC="ccache ${TOOLCHAIN}gcc" -j"$(nproc --all)"
 
           echo "Built files under:"
           ls -R out/arch/arm64/boot || true
