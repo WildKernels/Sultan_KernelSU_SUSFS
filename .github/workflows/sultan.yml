@@ -1,17 +1,12 @@
-name: Sultan
+name: Sultan Zuma Build
+
 permissions:
-  contents: write  # Allow writing to repository contents (for pushing tags)
-  actions: write   # Allows triggering actions
+  contents: read
+  actions: read
 
 on:
-  workflow_dispatch:        # manual run from Actions tab
-  push:                     # auto run on push
-    paths-ignore:
-      - "README.md"
-  pull_request:             # auto run on PR
-    paths-ignore:
-      - "README.md"
-  workflow_call:            # can still be reusable from other workflows
+  workflow_dispatch:
+  workflow_call:
     inputs:
       codename:
         required: false
@@ -30,245 +25,313 @@ on:
         type: string
         default: "6.1"
 
-  
 jobs:
-  build-kernel-sultan-kernelsu-susfs:
+  build:
     runs-on: ubuntu-latest
-    steps:
-      #- name: Maximize Build Space
-      #  uses: AdityaGarg8/remove-unwanted-software@v5
-      #  with:
-      #    remove-dotnet: 'true'          # Frees ~2 GB
-      #    remove-android: 'true'         # Frees ~9 GB
-      #    remove-haskell: 'true'         # Frees ~5.2 GB
-      #    remove-codeql: 'true'          # Frees ~5.4 GB
-      #    remove-docker-images: 'true'   # Frees ~3.2 GB
-      #    remove-large-packages: 'true'  # Frees ~3.1 GB
-      #    remove-swapfile: 'true'        # Frees ~4 GB
-      #    remove-cached-tools: 'false'   # Avoid unless confirmed safe
-      #    verbose: 'true'                # Enable detailed logging
-          
 
+    strategy:
+      fail-fast: false
+      matrix:
+        # We keep SUSFS on/off in matrix and control per-variant via "exclude"
+        susfs: [false, true]
+
+        build:
+          # KSUN -> SUSFS ONLY
+          - type: KSUN
+            ksu: true
+            repo: "KernelSU-Next/KernelSU-Next"
+            folder: "KernelSU-Next"
+            branch: "next"
+            exclude: susfsless           # do NOT run when susfs == false
+            ak3_suffix: "_KSUNext"
+
+          # RKSU -> SUSFS ONLY
+          - type: RKSU
+            ksu: true
+            repo: "rsuntk/KernelSU"
+            folder: "KernelSU"
+            branch: "main"
+            susfs_branch: "susfs-main"
+            exclude: susfsless           # do NOT run when susfs == false
+            ak3_suffix: "_RKSU"
+
+          # SukiSU -> NON-SUSFS ONLY (your exception)
+          - type: SukiSU
+            ksu: true
+            repo: "SukiSU-Ultra/SukiSU-Ultra"
+            folder: "KernelSU"
+            branch: "susfs-main"
+            exclude: susfs               # do NOT run when susfs == true
+            ak3_suffix: "_SukiSU"
+
+          # xxKSU -> SUSFS ONLY
+          - type: xxKSU
+            ksu: true
+            repo: "backslashxx/KernelSU"
+            folder: "KernelSU"
+            branch: "master"
+            exclude: susfsless           # do NOT run when susfs == false
+            ak3_suffix: "_xxKSU"
+
+        kernel:
+          - codename: ${{ inputs.codename || 'zuma' }}
+            repo: ${{ inputs.repo || 'android_kernel_google_zuma' }}
+            android_version: ${{ inputs.android_version || 'android14' }}
+            kernel_version: ${{ inputs.kernel_version || '6.1' }}
+            defconfig: zuma_defconfig
+            local_version: "-android14-11-gd7dac4b14270-ab12946699"
+            build_date: "Sun Apr 20 04:20:00 UTC 2025"
+
+        # Use build.exclude to filter combinations
+        exclude:
+          - build:
+              exclude: susfs
+            susfs: true       # skip variants that say "exclude: susfs" when susfs == true
+          - build:
+              exclude: susfsless
+            susfs: false      # skip variants that say "exclude: susfsless" when susfs == false
+
+    steps:
       - name: Download and extract GCC 14.2.0 toolchain
         run: |
+          set -e
           echo "Downloading GCC 14.2.0 cross-compiler toolchain..."
-          wget https://www.kernel.org/pub/tools/crosstool/files/bin/x86_64/14.2.0/x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz
-          echo "Extracting .gz file..."
-          gunzip x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz
-          echo "Extracting .tar file..."
+          wget https://www.kernel.org/pub/tools/crosstool/files/bin/x86_64/14.2.0/x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz -O toolchain.tar.gz
+          echo "Extracting toolchain..."
+          gunzip toolchain.tar.gz
           tar -xf x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar
-          echo "GCC 14.2.0 toolchain extracted successfully"
+          TOOLCHAIN_DIR=$(tar -tf x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar | head -1 | cut -d/ -f1)
+          echo "TOOLCHAIN_DIR=$GITHUB_WORKSPACE/$TOOLCHAIN_DIR" >> $GITHUB_ENV
+          echo "Toolchain directory: $GITHUB_WORKSPACE/$TOOLCHAIN_DIR"
 
-      - name: Set CONFIG Environment Variable
+      - name: Clone dependencies and set environment
         run: |
-          CONFIG="${{ inputs.repo }}"
-          
-          # Set CONFIG as an environment variable for future steps
-          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
-          
-          echo "CONFIG set to: $CONFIG"
+          set -e
 
-      - name: Clone AnyKernel3 and Other Dependencies
-        run: |
-          echo "Cloning AnyKernel3 and other dependencies..."
-          
-          ANYKERNEL_BRANCH="sultan-${{ inputs.codename }}"
-          SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          ANYKERNEL_BRANCH="sultan-${{ matrix.kernel.codename }}"
+          SUSFS_BRANCH="gki-${{ matrix.kernel.android_version }}-${{ matrix.kernel.kernel_version }}"
 
-          # Debug print the branches
-          echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
-          echo "Using branch for SUSFS: $SUSFS_BRANCH"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ccache lz4 zip git wget
 
-          # Clone repositories using the branch names
-          git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-          git clone https://github.com/TheWildJames/kernel_patches.git
-          git clone https://github.com/kerneltoast/${{ inputs.repo }}
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-          cd susfs4ksu
-          git checkout a162e2469d0b472545e5e46457eee171c0975fb0
-      
-      - name: Add KernelSU
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
-          
-          echo "Adding KernelSU..."
-          curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s wild
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
-      - name: Apply SUSFS Patches
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
-          
-          echo "Applying SUSFS patches..."
-          
-          # Copy SUSFS patches
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./
-          cp ../susfs4ksu/kernel_patches/fs/* ./fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
+          # AnyKernel3
+          git clone --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH" AK3
+          echo "ak3_dir=$PWD/AK3" >> $GITHUB_ENV
 
-          cd ./Wild_KSU
-          
-          echo "Applying wild SUSFS patches..."
-          cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
-          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+          # SUSFS patches
+          git clone --depth=5 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" susfs
+          echo "susfs_dir=$PWD/susfs" >> $GITHUB_ENV
 
-          echo "Applying wild SUSFS Fix patches..."
-          cp ../../kernel_patches/wild/susfs_fix_patches/v1.5.12/fix_core_hook.c.patch ./
-          patch -p1 --forward < fix_core_hook.c.patch
+          # James patches (WildKernels)
+          git clone --depth=1 https://github.com/WildKernels/kernel_patches.git james_patches
+          echo "james_dir=$PWD/james_patches" >> $GITHUB_ENV
 
-          cp ../../kernel_patches/wild/susfs_fix_patches/v1.5.12/fix_sucompat.c.patch ./
-          patch -p1 --forward < fix_sucompat.c.patch
+          # SukiSU extra patches
+          git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU_patch.git suki_patches
+          echo "suki_dir=$PWD/suki_patches" >> $GITHUB_ENV
 
-          cp ../../kernel_patches/wild/susfs_fix_patches/v1.5.12/fix_kernel_compat.c.patch ./
-          patch -p1 --forward < fix_kernel_compat.c.patch
-          
-          # Change to common directory and apply SUSFS patch
-          cd ..
-          patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
-          cp ../kernel_patches/sultan/sys.c_fix.patch ./
-          patch -p1 --fuzz=3 < sys.c_fix.patch
+          # Sultan kernel source (kerneltoast)
+          git clone --depth=1 https://github.com/kerneltoast/${{ matrix.kernel.repo }} sultan
+          echo "kernel_dir=$PWD/sultan" >> $GITHUB_ENV
 
-      - name: Apply KSU Hooks
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
-          # Apply additional patch
-          cp ../kernel_patches/wild/hooks/syscall_hooks.patch ./
-          patch -p1 -F 3 < syscall_hooks.patch
-
-      - name: Configure KernelSU
-        run: |
-          cd "$CONFIG"
-          # KernelSU Configuration
-          echo "# KernelSU Configuration" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_KPROBES_HOOK=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-      - name: Configure Mountify Support
-        run: |
-          cd "$CONFIG"
-          # Mountify Support
-          echo "# Mountify Support" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TMPFS_XATTR=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-      - name: Configure Networking
-        run: |
-          cd "$CONFIG"
-          # Networking Configuration
-          echo "# Networking Configuration" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP6_NF_MATCH_HL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-      - name: Configure TCP Congestion Control
-        run: |
-          cd "$CONFIG"
-          # BBR TCP Congestion Control
-          echo "# BBR TCP Congestion Control" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TCP_CONG_BBR=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_NET_SCH_FQ=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TCP_CONG_BIC=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_TCP_CONG_HTCP=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-      - name: Configure IPSet Support
-        run: |
-          cd "$CONFIG"
-          # IPSet support
-          echo "# IPSet Support" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_MAX=65534" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_BITMAP_IP=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_BITMAP_IPMAC=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_BITMAP_PORT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_IP=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_IPMARK=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_IPPORT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_IPPORTIP=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_IPPORTNET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_IPMAC=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_MAC=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_NETPORTNET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_NET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_NETNET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_NETPORT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IP_SET_LIST_SET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-      - name: Configure SUSFS
-        run: |
-          cd "$CONFIG"
-          # SUSFS Configuration
-          echo "# SUSFS Configuration" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-
-      - name: Run sed and perl Commands
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
-          
-          echo "Running sed commands..."
-          sed -i 's/CONFIG_LOCALVERSION="-Sultan"/CONFIG_LOCALVERSION="-Sultan-Wild"/' ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-      - name: Build the Kernel
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
-          
-          make CROSS_COMPILE=$GITHUB_WORKSPACE/gcc-14.2.0-nolibc/aarch64-linux/bin/aarch64-linux- CC=$GITHUB_WORKSPACE/gcc-14.2.0-nolibc/aarch64-linux/bin/aarch64-linux-gcc -j$(nproc --all) ${{ inputs.codename }}_defconfig
-          make CROSS_COMPILE=$GITHUB_WORKSPACE/gcc-14.2.0-nolibc/aarch64-linux/bin/aarch64-linux- CC=$GITHUB_WORKSPACE/gcc-14.2.0-nolibc/aarch64-linux/bin/aarch64-linux-gcc -j$(nproc --all)
-
-      - name: Copy Images
-        run: |
-          echo "Changing to configuration directory: $CONFIG..."
-          cd "$CONFIG"
-
-          echo "Copying Image.lz4 and concatenating DTB files..."
-          cp ./out/arch/arm64/boot/Image.lz4 ../AnyKernel3/Image.lz4
-          if [ "${{ inputs.codename }}" == "gs201" ]; then
-            cat ./out/google-devices/gs201/dts/*.dtb > ../AnyKernel3/dtb
-            #cp ./out/google-devices/gs201/dts/dtbo.img ../AnyKernel3/dtbo.img
-          elif [ "${{ inputs.codename }}" == "zuma" ]; then
-            cat ./out/google-devices/zuma/dts/*.dtb > ../AnyKernel3/dtb
-          elif [ "${{ inputs.codename }}" == "zumapro" ]; then
-            cat ./out/google-devices/zumapro/dts/*.dtb > ../AnyKernel3/dtb
+          # Decide KernelSU repo/branch per variant
+          if [[ "${{ matrix.build.type }}" == "KSUN" ]]; then
+            echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
+            echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
+          elif [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
+            if [[ "${{ matrix.susfs }}" == "true" && -n "${{ matrix.build.susfs_branch }}" ]]; then
+              echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
+              echo "ksu_branch=${{ matrix.build.susfs_branch }}" >> $GITHUB_ENV
+            else
+              echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
+              echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
+            fi
+          elif [[ "${{ matrix.build.type }}" == "SukiSU" ]]; then
+            echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
+            echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
+          elif [[ "${{ matrix.build.type }}" == "xxKSU" ]]; then
+            echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
+            echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
           fi
 
-      - name: Create ZIP Files for Different Formats
-        run: |
-          echo "Navigating to AnyKernel3 directory..."
-          cd ./AnyKernel3
+          build_type="${{ matrix.build.ak3_suffix }}"
+          if [[ "${{ matrix.susfs }}" == "true" ]]; then
+            build_type="${build_type}.SUSFS"
+          fi
 
-          # Zip the files in the AnyKernel3 directory with a new naming convention
-          ZIP_NAME="${{ inputs.codename }}_A16_Sultan_WKSU_SUSFS.zip"
-          echo "Creating zip file $ZIP_NAME..."
+          date=$(date +"%d.%m.%Y")
+          zip_name="$date-${{ matrix.kernel.codename }}${build_type}_A16_Sultan-${{ github.run_number }}"
+          echo "zip_name=$zip_name" >> $GITHUB_ENV
+
+      - name: Setup kernel config and Mountify support
+        run: |
+          set -e
+          cd "${{ env.kernel_dir }}"
+
+          # Base configs: tmpfs ACL/XATTR, networking, BBR, IPSet, etc.
+          configs="CONFIG_TMPFS_XATTR=y CONFIG_TMPFS_POSIX_ACL=y \
+          CONFIG_IP_NF_TARGET_TTL=y CONFIG_IP6_NF_TARGET_HL=y CONFIG_IP6_NF_MATCH_HL=y \
+          CONFIG_TCP_CONG_ADVANCED=y CONFIG_TCP_CONG_BBR=y CONFIG_NET_SCH_FQ=y \
+          CONFIG_TCP_CONG_BIC=n CONFIG_TCP_CONG_WESTWOOD=n CONFIG_TCP_CONG_HTCP=n \
+          CONFIG_DEFAULT_BBR=y CONFIG_BPF_STREAM_PARSER=y \
+          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y CONFIG_NETFILTER_XT_SET=y CONFIG_IP_SET=y \
+          CONFIG_IP_SET_MAX=65534 CONFIG_IP_SET_BITMAP_IP=y CONFIG_IP_SET_BITMAP_IPMAC=y \
+          CONFIG_IP_SET_BITMAP_PORT=y CONFIG_IP_SET_HASH_IP=y CONFIG_IP_SET_HASH_IPMARK=y \
+          CONFIG_IP_SET_HASH_IPPORT=y CONFIG_IP_SET_HASH_IPPORTIP=y CONFIG_IP_SET_HASH_IPPORTNET=y \
+          CONFIG_IP_SET_HASH_IPMAC=y CONFIG_IP_SET_HASH_MAC=y CONFIG_IP_SET_HASH_NETPORTNET=y \
+          CONFIG_IP_SET_HASH_NET=y CONFIG_IP_SET_HASH_NETNET=y CONFIG_IP_SET_HASH_NETPORT=y \
+          CONFIG_IP_SET_HASH_NETIFACE=y CONFIG_IP_SET_LIST_SET=y \
+          CONFIG_IP6_NF_NAT=y CONFIG_IP6_NF_TARGET_MASQUERADE=y"
+
+          for config in $configs; do
+            config_name=$(echo "${config}" | cut -d "=" -f 1)
+            sed -i -E "s/.*(${config_name}=.*)/# \1/gi" "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+            echo "${config}" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+          done
+
+          # Sultan's LOCALVERSION and build timestamp
+          sed -i 's/${LOCALVERSION+set}/set/' scripts/setlocalversion
+          if [[ -n "${{ matrix.kernel.local_version }}" ]]; then
+            sed -i "s/CONFIG_LOCALVERSION=\"-Sultan\"/CONFIG_LOCALVERSION=\"${{ matrix.kernel.local_version }}\"/" \
+              "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+          fi
+          if [[ -n "${{ matrix.kernel.build_date }}" ]]; then
+            perl -pi -e 's/build-timestamp = \$\(or \$\(KBUILD_BUILD_TIMESTAMP\), \$\(build-timestamp-auto\)\)/build-timestamp = "${{ matrix.kernel.build_date }}"/' \
+              init/Makefile
+          fi
+
+      - name: Add Baseband-guard (BBG)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${{ env.kernel_dir }}"
+          echo "Adding Baseband-guard..."
+          wget -O- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+          echo "CONFIG_BBG=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
+
+      - name: Add KernelSU (${{ matrix.build.type }})
+        if: matrix.build.ksu
+        run: |
+          set -e
+          cd "${{ env.kernel_dir }}"
+
+          echo "Integrating KernelSU variant: ${{ matrix.build.type }} (repo: ${{ env.ksu_repo }}, branch: ${{ env.ksu_branch }})"
+          curl -LSs "https://raw.githubusercontent.com/${{ env.ksu_repo }}/${{ env.ksu_branch }}/kernel/setup.sh" | bash -s "${{ env.ksu_branch }}"
+
+          # Variant-specific extra hooks using only existing patches
+          if [[ "${{ matrix.build.type }}" == "KSUN" ]]; then
+            echo "Applying KSUN syscall hook patch from James (Sultan)..."
+            patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
+          elif [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
+            if [[ "${{ matrix.susfs }}" == "true" ]]; then
+              echo "Applying RKSU syscall hooks (SUSFS)..."
+              patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
+            fi
+          elif [[ "${{ matrix.build.type }}" == "SukiSU" ]]; then
+            echo "Applying SukiSU scope_min manual hooks..."
+            patch -p1 -F 3 < "${{ env.suki_dir }}/hooks/scope_min_manual_hooks_v1.6.patch"
+          elif [[ "${{ matrix.build.type }}" == "xxKSU" ]]; then
+            echo "xxKSU: no extra James patches applied."
+          fi
+
+          # Generic KernelSU configs
+          echo "CONFIG_KSU=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+          echo "CONFIG_KSU_KPROBES_HOOK=n" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+
+          # RKSU & SukiSU manual hook configs
+          if [[ "${{ matrix.build.type }}" == "RKSU" || "${{ matrix.build.type }}" == "SukiSU" ]]; then
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+          fi
+
+      - name: Apply SUSFS patches
+        if: matrix.susfs
+        run: |
+          set -e
+          cd "${{ env.kernel_dir }}"
+
+          echo "Applying SUSFS patches..."
+          cp "${{ env.susfs_dir }}/kernel_patches/50_add_susfs_in_gki-${{ matrix.kernel.android_version }}-${{ matrix.kernel.kernel_version }}.patch" ./
+          cp "${{ env.susfs_dir }}/kernel_patches/fs/"* "./fs/"
+          cp "${{ env.susfs_dir }}/kernel_patches/include/linux/"* "./include/linux/"
+
+          patch -p1 < "50_add_susfs_in_gki-${{ matrix.kernel.android_version }}-${{ matrix.kernel.kernel_version }}.patch" || true
+
+          echo "Applying Sultan sys.c fix..."
+          patch -p1 --fuzz=3 < "${{ env.james_dir }}/sultan/sys.c_fix.patch"
+
+          echo "Adding SUSFS configs..."
+          {
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n"
+          } >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+
+      - name: Cache kernel build
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-SUSFS_${{ matrix.susfs }}-ccache-${{ github.sha }}-${{ github.run_number }}
+          restore-keys: |
+            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-SUSFS_${{ matrix.susfs }}-ccache-
+            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-
+            ${{ matrix.kernel.codename }}-
+
+      - name: Build the kernel
+        run: |
+          set -e
+          cd "${{ env.kernel_dir }}"
+
+          export KBUILD_BUILD_USER="ctrlpaste"
+          export KBUILD_BUILD_HOST="Github"
+
+          TOOLCHAIN="${TOOLCHAIN_DIR}/bin/aarch64-linux-"
+
+          echo "Using defconfig: ${{ matrix.kernel.defconfig }}"
+          make CROSS_COMPILE="${TOOLCHAIN}" CC="${TOOLCHAIN}gcc" -j"$(nproc --all)" ${{ matrix.kernel.defconfig }}
+
+          echo "Starting kernel build..."
+          make CROSS_COMPILE="ccache ${TOOLCHAIN}" CC="ccache ${TOOLCHAIN}gcc" -j"$(nproc --all)"
+
+      - name: Prepare AnyKernel3 files
+        run: |
+          set -e
+          cd "${{ env.kernel_dir }}"
+
+          echo "Copying Image.lz4 and DTB for zuma..."
+          cp ./out/arch/arm64/boot/Image.lz4 "${{ env.ak3_dir }}/Image.lz4"
+          cat ./out/google-devices/${{ matrix.kernel.codename }}/dts/*.dtb > "${{ env.ak3_dir }}/dtb"
+
+      - name: Create flashable zip
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+
+          cd AK3
+          ZIP_NAME="${{ env.zip_name }}.zip"
+          echo "Creating AnyKernel3 zip: $ZIP_NAME"
           zip -r "../$ZIP_NAME" ./*
-          
-      - name: Upload Build Artifacts
+          cd ..
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-${{ inputs.codename }}
+          name: ${{ env.zip_name }}
           path: |
             *.zip
-
