@@ -88,7 +88,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEW_TAG: ${{ env.NEW_TAG }}
 
+      # Display Files Uploaded
       - name: Display Files Uploaded
         run: |
-          echo "Release assets for ${NEW_TAG}:"
-          gh release view "${NEW_TAG}" --json assets --jq '.assets[].name'
+          echo "GitHub release created with the following files:"
+          ls ./downloaded-artifacts/**/*
