@@ -5,11 +5,8 @@ permissions:
   actions: read
 
 on:
-  # Can be called from another workflow (e.g. a separate release orchestrator)
   workflow_call:
-  # Manual trigger from the Actions tab
   workflow_dispatch:
-  # Optional: CI on PR / push, only builds and uploads artifacts
   pull_request:
   push:
     paths-ignore:
@@ -50,7 +47,8 @@ jobs:
             susfs_branch: "susfs-main"
             exclude: susfs
             kernel_patches: ""
-            susfsless_kernel_patches: "sultan/syscall_hooks.patch sultan/reboot-hook.patch"
+            # reboot-hook.patch removed because it does not exist in james_patches
+            susfsless_kernel_patches: "sultan/syscall_hooks.patch"
             extra_configs: "CONFIG_KSU_MANUAL_HOOK=y"
             ak3_suffix: "_RKSU"
 
@@ -61,7 +59,8 @@ jobs:
             branch: "nongki"
             susfs_branch: "susfs-main"
             exclude: susfsless
-            susfsless_kernel_patches: "sultan/syscall_hooks.patch sultan/reboot-hook.patch"
+            # reboot-hook.patch removed because it does not exist in james_patches
+            susfsless_kernel_patches: "sultan/syscall_hooks.patch"
             extra_configs: "CONFIG_KSU_MANUAL_HOOK=y CONFIG_KSU_MANUAL_SU=n CONFIG_COMPAT=y CONFIG_ZRAM_GS_WRITEBACK=y"
             ak3_suffix: "_SukiSU"
             # kpm: "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux"
@@ -204,7 +203,13 @@ jobs:
           # Kernel patches used only when SUSFS is disabled (susfsless)
           if [[ -n "${{ matrix.build.susfsless_kernel_patches }}" && "${{ matrix.susfs }}" != "true" ]]; then
             for patch_name in ${{ matrix.build.susfsless_kernel_patches }}; do
-              patch -p1 -F 3 < "${{ env.james_dir }}/${patch_name}"
+              patch_path="${{ env.james_dir }}/${patch_name}"
+              if [[ -f "$patch_path" ]]; then
+                echo "Applying susfsless kernel patch: $patch_path"
+                patch -p1 -F 3 < "$patch_path"
+              else
+                echo "WARNING: susfsless kernel patch not found, skipping: $patch_path"
+              fi
             done
           fi
 
@@ -245,107 +250,4 @@ jobs:
           cd "${{ env.kernel_dir }}"
 
           # Copy SUSFS patches into the kernel tree
-          cp "${{ env.susfs_dir }}/kernel_patches/50_add_susfs_in_gki-${{ matrix.kernel.android_version }}-${{ matrix.kernel.kernel_version }}.patch" .
-          cp "${{ env.susfs_dir }}/kernel_patches/fs/"* fs/
-          cp "${{ env.susfs_dir }}/kernel_patches/include/linux/"* include/linux/
-
-          # KSU patches specific for SUSFS (if set in matrix)
-          if [[ -n "${{ matrix.build.susfs_ksu_patches }}" ]]; then
-            cd "${{ env.kernel_dir }}/${{ matrix.build.folder }}"
-            for patch_name in ${{ matrix.build.susfs_ksu_patches }}; do
-              patch -p1 -F 3 < "${{ env.james_dir }}/${patch_name}"
-            done
-            cd "${{ env.kernel_dir }}"
-          fi
-
-          # Extra kernel patches for SUSFS (if any)
-          if [[ -n "${{ matrix.build.susfs_kernel_patches }}" ]]; then
-            for patch_name in ${{ matrix.build.susfs_kernel_patches }}; do
-              patch -p1 -F 3 < "${{ env.james_dir }}/${patch_name}"
-            done
-          fi
-
-          # Apply main SUSFS patch and sys.c fix
-          patch -p1 < 50_add_susfs_in_gki-${{ matrix.kernel.android_version }}-${{ matrix.kernel.kernel_version }}.patch || true
-          patch -p1 --fuzz=3 < "${{ env.james_dir }}/sultan/sys.c_fix.patch"
-
-          # Additional SUSFS configs if defined in matrix
-          if [[ -n "${{ matrix.build.susfs_configs }}" ]]; then
-            for config in ${{ matrix.build.susfs_configs }}; do
-              echo "--> Added ${config} <--"
-              config_name=$(echo "${config}" | cut -d "=" -f 1)
-              sed -i -E "s/.*(${config_name}=.*)/# \1/gi" arch/arm64/configs/${{ matrix.kernel.defconfig }}
-              echo -e "\n${config}" >> arch/arm64/configs/${{ matrix.kernel.defconfig }}
-            done
-          fi
-
-      - name: Cache kernel build
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-SUSFS_${{ matrix.susfs }}-ccache-${{ github.sha }}-${{ github.run_number }}
-          restore-keys: |
-            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-SUSFS_${{ matrix.susfs }}-ccache-
-            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-
-            ${{ matrix.kernel.codename }}-
-
-      - name: Build the kernel
-        run: |
-          cd "${{ env.kernel_dir }}"
-
-          export KBUILD_BUILD_USER="ctrlpaste"
-          export KBUILD_BUILD_HOST="Github"
-
-          make CROSS_COMPILE="${TOOLCHAIN_DIR}/bin/aarch64-linux-" CC="${TOOLCHAIN_DIR}/bin/aarch64-linux-gcc" -j"$(nproc --all)" ${{ matrix.kernel.defconfig }}
-          make CROSS_COMPILE="ccache ${TOOLCHAIN_DIR}/bin/aarch64-linux-" CC="ccache ${TOOLCHAIN_DIR}/bin/aarch64-linux-gcc" -j"$(nproc --all)"
-
-      - name: Setup AnyKernel3 zip and optional KPM
-        run: |
-          cd "${{ env.kernel_dir }}"
-
-          echo "Copying Image.lz4 and concatenating DTB files..."
-          cp ./out/arch/arm64/boot/Image.lz4 "${{ env.ak3_dir }}/Image.lz4"
-          cat ./out/google-devices/${{ matrix.kernel.codename }}/dts/*.dtb > "${{ env.ak3_dir }}/dtb"
-
-          if [[ -n "${{ matrix.build.kpm }}" ]]; then
-            cd "${{ env.ak3_dir }}"
-            curl -LSs "${{ matrix.build.kpm }}" -o patch && chmod 777 patch
-            img_file=$(find . -maxdepth 1 -type f -name "Image*")
-            echo "$img_file"
-
-            if [[ "$img_file" == "./Image.gz"* ]]; then
-              dd if="$img_file" bs=1 | gunzip > Image || true
-              echo "-> Convert to: Image"
-            elif [[ "$img_file" == "./Image.lz4" ]]; then
-              lz4 -d "$img_file" Image
-              echo "-> Decompress to: Image"
-            fi
-
-            ./patch && mv oImage Image
-
-            if [[ "$img_file" == "./Image.gz"* ]]; then
-              gzip -c Image > Image.gz
-              rm Image
-              echo "-> Compress: Image.gz"
-              if [[ "$img_file" == "./Image.gz-dtb" ]]; then
-                compressed_length=$(dd if=Image.gz-dtb bs=1 $skip | gzip -c | wc -c)
-                dd if=Image.gz-dtb bs=1 skip=$compressed_length > dtb
-                cat Image.gz dtb > Image.gz-dtb
-                rm Image.gz dtb
-                echo "-- Image.gz -> Image.gz-dtb"
-              fi
-            elif [[ "$img_file" == "./Image.lz4" ]]; then
-              lz4 -f Image Image.lz4
-              rm Image
-              echo "-> Compress: Image.lz4"
-            fi
-
-            rm patch
-            cd -
-          fi
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.zip_name }}
-          path: ${{ env.ak3_dir }}/*
+          cp "${{ env.susfs_dir }}/kernel_patches/50_add_susfs_in_gki-${{ matrix.kernel.android_version }}-${{ matrix.kernel.kernel_
