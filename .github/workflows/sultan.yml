@@ -1,35 +1,17 @@
-name: Sultan Zuma Build
+name: Sultan Zuma KSU (no SukiSU)
 
 permissions:
   contents: read
   actions: read
 
 on:
-  workflow_dispatch:        # manual run from Actions tab
-  push:                     # auto run on push
+  workflow_dispatch:
+  push:
     paths-ignore:
       - "README.md"
-  pull_request:             # optional: auto run on PR
+  pull_request:
     paths-ignore:
       - "README.md"
-  workflow_call:            # reusable from other workflows
-    inputs:
-      codename:
-        required: false
-        type: string
-        default: "zuma"
-      repo:
-        required: false
-        type: string
-        default: "android_kernel_google_zuma"
-      android_version:
-        required: false
-        type: string
-        default: "android16"
-      kernel_version:
-        required: false
-        type: string
-        default: "6.1"
 
 jobs:
   build:
@@ -38,68 +20,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # SUSFS on/off, we control per-variant via "exclude"
-        susfs: [false, true]
-
         build:
-          # KSUN -> SUSFS ONLY
           - type: KSUN
             ksu: true
             repo: "KernelSU-Next/KernelSU-Next"
             folder: "KernelSU-Next"
             branch: "next"
-            exclude: susfsless
             ak3_suffix: "_KSUNext"
 
-          # RKSU -> SUSFS ONLY
           - type: RKSU
             ksu: true
             repo: "rsuntk/KernelSU"
             folder: "KernelSU"
             branch: "main"
             susfs_branch: "susfs-main"
-            exclude: susfsless
             ak3_suffix: "_RKSU"
 
-          # SukiSU -> NON-SUSFS ONLY
-          - type: SukiSU
-            ksu: true
-            repo: "SukiSU-Ultra/SukiSU-Ultra"
-            folder: "KernelSU"
-            branch: "susfs-main"
-            exclude: susfs
-            ak3_suffix: "_SukiSU"
-
-          # xxKSU -> SUSFS ONLY
           - type: xxKSU
             ksu: true
             repo: "backslashxx/KernelSU"
             folder: "KernelSU"
             branch: "master"
-            exclude: susfsless
             ak3_suffix: "_xxKSU"
 
         kernel:
-          - codename: ${{ inputs.codename || 'zuma' }}
-            repo: ${{ inputs.repo || 'android_kernel_google_zuma' }}
-            android_version: ${{ inputs.android_version || 'android16' }}
-            kernel_version: ${{ inputs.kernel_version || '6.1' }}
-            defconfig: zuma_defconfig
-            local_version: "-android16-qpr1-11-gd7dac4b14270-ab12946699"
+          - codename: "zuma"
+            repo: "android_kernel_google_zuma"
+            android_version: "android14"
+            kernel_version: "6.1"
+            defconfig: "zuma_defconfig"
+            local_version: "-android14-11-gd7dac4b14270-ab12946699"
             build_date: "Sun Apr 20 04:20:00 UTC 2025"
 
-        exclude:
-          - build:
-              exclude: susfs
-            susfs: true
-          - build:
-              exclude: susfsless
-            susfs: false
-
     steps:
-      # ------------------------------------------------------------------
-      # Toolchain - auto-detect aarch64-linux-gcc*
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
+      # Toolchain (auto-detect aarch64-linux-gcc*)
+      # ------------------------------------------------------------
       - name: Download and extract GCC 14.2.0 toolchain
         run: |
           set -e
@@ -115,8 +71,7 @@ jobs:
 
           if [ -z "$GCC_CANDIDATE" ]; then
             echo "ERROR: Could not find any aarch64-linux-gcc* binary inside toolchain_raw."
-            echo "Dumping some paths for debugging:"
-            find toolchain_raw -maxdepth 5 -type f | head -n 50
+            find toolchain_raw -maxdepth 5 -type f | head -n 50 || true
             exit 1
           fi
 
@@ -134,9 +89,9 @@ jobs:
             ln -sf "$GCC_BASENAME" "$TOOLCHAIN_BIN_DIR/aarch64-linux-gcc"
           fi
 
-      # ------------------------------------------------------------------
-      # Clone repos and set env
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
+      # Clone repos and environment
+      # ------------------------------------------------------------
       - name: Clone dependencies and set environment
         run: |
           set -e
@@ -163,12 +118,8 @@ jobs:
           git clone --depth=1 https://github.com/WildKernels/kernel_patches.git james_patches
           echo "james_dir=$PWD/james_patches" >> $GITHUB_ENV
 
-          # Sultan kernel source (kerneltoast)
-          if [[ "${{ matrix.kernel.android_version }}" == "android16" ]]; then
-             git clone --depth=1 https://android.googlesource.com/kernel/devices/google/zuma -b android-gs-akita-android16 sultan
-          else
-             git clone --depth=1 https://github.com/kerneltoast/${{ matrix.kernel.repo }} sultan
-          fi
+          # Sultan kernel source
+          git clone --depth=1 https://github.com/kerneltoast/${{ matrix.kernel.repo }} sultan
           echo "kernel_dir=$PWD/sultan" >> $GITHUB_ENV
 
           # Decide KernelSU repo/branch per variant
@@ -176,33 +127,25 @@ jobs:
             echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
             echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
-            if [[ "${{ matrix.susfs }}" == "true" && -n "${{ matrix.build.susfs_branch }}" ]]; then
+            if [[ -n "${{ matrix.build.susfs_branch }}" ]]; then
               echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
               echo "ksu_branch=${{ matrix.build.susfs_branch }}" >> $GITHUB_ENV
             else
               echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
               echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
             fi
-          elif [[ "${{ matrix.build.type }}" == "SukiSU" ]]; then
-            echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
-            echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.build.type }}" == "xxKSU" ]]; then
             echo "ksu_repo=${{ matrix.build.repo }}" >> $GITHUB_ENV
             echo "ksu_branch=${{ matrix.build.branch }}" >> $GITHUB_ENV
           fi
 
-          build_type="${{ matrix.build.ak3_suffix }}"
-          if [[ "${{ matrix.susfs }}" == "true" ]]; then
-            build_type="${build_type}.SUSFS"
-          fi
-
           date=$(date +"%d.%m.%Y")
-          zip_name="$date-${{ matrix.kernel.codename }}${build_type}_A16_Sultan-${{ github.run_number }}"
+          zip_name="$date-${{ matrix.kernel.codename }}${{ matrix.build.ak3_suffix }}.SUSFS_A16_Sultan-${{ github.run_number }}"
           echo "zip_name=$zip_name" >> $GITHUB_ENV
 
-      # ------------------------------------------------------------------
-      # Base configs (Mountify-style) and Sultan version
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
+      # Mountify-style configs + Sultan version/timestamp
+      # ------------------------------------------------------------
       - name: Setup kernel config and Mountify support
         run: |
           set -e
@@ -238,9 +181,9 @@ jobs:
               init/Makefile
           fi
 
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       # Baseband-guard
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       - name: Add Baseband-guard (BBG)
         shell: bash
         run: |
@@ -251,9 +194,9 @@ jobs:
           echo "CONFIG_BBG=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
 
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       # KernelSU variants
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       - name: Add KernelSU (${{ matrix.build.type }})
         if: matrix.build.ksu
         run: |
@@ -267,18 +210,8 @@ jobs:
             echo "Applying KSUN syscall hook patch..."
             patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
           elif [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
-            if [[ "${{ matrix.susfs }}" == "true" ]]; then
-              echo "Applying RKSU syscall hook patch (SUSFS)..."
-              patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
-            fi
-          elif [[ "${{ matrix.build.type }}" == "SukiSU" ]]; then
-            echo "SukiSU: using builtin patches from SukiSU-Ultra repo and extra configs."
-            {
-              echo "CONFIG_KSU_MANUAL_HOOK=y"
-              echo "CONFIG_KSU_MANUAL_SU=n"
-              echo "CONFIG_COMPAT=y"
-              echo "CONFIG_ZRAM_GS_WRITEBACK=y"
-            } >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
+            echo "Applying RKSU syscall hook patch..."
+            patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
           elif [[ "${{ matrix.build.type }}" == "xxKSU" ]]; then
             echo "xxKSU: no extra external patches."
           fi
@@ -290,11 +223,10 @@ jobs:
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           fi
 
-      # ------------------------------------------------------------------
-      # SUSFS (susfs == true, all variants except SukiSU by matrix)
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
+      # SUSFS – enabled for all variants in this workflow
+      # ------------------------------------------------------------
       - name: Apply SUSFS patches
-        if: matrix.susfs
         run: |
           set -e
           cd "${{ env.kernel_dir }}"
@@ -327,22 +259,21 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_SU=n"
           } >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
 
-      # ------------------------------------------------------------------
-      # Cache
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
+      # ccache
+      # ------------------------------------------------------------
       - name: Cache kernel build
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-SUSFS_${{ matrix.susfs }}-ccache-${{ github.sha }}-${{ github.run_number }}
+          key: ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-ccache-${{ github.sha }}
           restore-keys: |
-            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-SUSFS_${{ matrix.susfs }}-ccache-
-            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-
+            ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-ccache-
             ${{ matrix.kernel.codename }}-
 
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       # Build
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       - name: Build the kernel
         run: |
           set -e
@@ -359,9 +290,9 @@ jobs:
           echo "Starting kernel build..."
           make O=out CROSS_COMPILE="ccache ${TOOLCHAIN}" CC="ccache ${TOOLCHAIN}gcc" -j"$(nproc --all)"
 
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       # AnyKernel3 packaging
-      # ------------------------------------------------------------------
+      # ------------------------------------------------------------
       - name: Prepare AnyKernel3 files
         run: |
           set -e
