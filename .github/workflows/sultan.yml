@@ -9,10 +9,10 @@ on:
   push:                     # auto run on push
     paths-ignore:
       - "README.md"
-  pull_request:             # auto run on PR
+  pull_request:             # optional: auto run on PR
     paths-ignore:
       - "README.md"
-  workflow_call:            # can still be reusable from other workflows
+  workflow_call:            # reusable from other workflows
     inputs:
       codename:
         required: false
@@ -30,7 +30,6 @@ on:
         required: false
         type: string
         default: "6.1"
-
 
 jobs:
   build:
@@ -99,18 +98,26 @@ jobs:
             susfs: false      # skip variants that say "exclude: susfsless" when susfs == false
 
     steps:
+      # ------------------------------------------------------------------
+      # Toolchain
+      # ------------------------------------------------------------------
       - name: Download and extract GCC 14.2.0 toolchain
         run: |
           set -e
           echo "Downloading GCC 14.2.0 cross-compiler toolchain..."
           wget https://www.kernel.org/pub/tools/crosstool/files/bin/x86_64/14.2.0/x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz -O toolchain.tar.gz
-          echo "Extracting toolchain..."
-          gunzip toolchain.tar.gz
-          tar -xf x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar
-          TOOLCHAIN_DIR=$(tar -tf x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar | head -1 | cut -d/ -f1)
-          echo "TOOLCHAIN_DIR=$GITHUB_WORKSPACE/$TOOLCHAIN_DIR" >> $GITHUB_ENV
-          echo "Toolchain directory: $GITHUB_WORKSPACE/$TOOLCHAIN_DIR"
 
+          echo "Extracting toolchain..."
+          mkdir -p toolchain
+          tar -xzf toolchain.tar.gz -C toolchain --strip-components=1
+
+          TOOLCHAIN_DIR="$GITHUB_WORKSPACE/toolchain"
+          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
+          echo "Toolchain directory: $TOOLCHAIN_DIR"
+
+      # ------------------------------------------------------------------
+      # Clone repos and set env
+      # ------------------------------------------------------------------
       - name: Clone dependencies and set environment
         run: |
           set -e
@@ -174,6 +181,9 @@ jobs:
           zip_name="$date-${{ matrix.kernel.codename }}${build_type}_A16_Sultan-${{ github.run_number }}"
           echo "zip_name=$zip_name" >> $GITHUB_ENV
 
+      # ------------------------------------------------------------------
+      # Base configs (Mountify-style) and Sultan version
+      # ------------------------------------------------------------------
       - name: Setup kernel config and Mountify support
         run: |
           set -e
@@ -211,6 +221,9 @@ jobs:
               init/Makefile
           fi
 
+      # ------------------------------------------------------------------
+      # Baseband-guard
+      # ------------------------------------------------------------------
       - name: Add Baseband-guard (BBG)
         shell: bash
         run: |
@@ -221,6 +234,9 @@ jobs:
           echo "CONFIG_BBG=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
 
+      # ------------------------------------------------------------------
+      # KernelSU variants
+      # ------------------------------------------------------------------
       - name: Add KernelSU (${{ matrix.build.type }})
         if: matrix.build.ksu
         run: |
@@ -255,6 +271,9 @@ jobs:
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           fi
 
+      # ------------------------------------------------------------------
+      # SUSFS (for all variants where susfs == true)
+      # ------------------------------------------------------------------
       - name: Apply SUSFS patches
         if: matrix.susfs
         run: |
@@ -290,6 +309,9 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_SU=n"
           } >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
 
+      # ------------------------------------------------------------------
+      # Cache
+      # ------------------------------------------------------------------
       - name: Cache kernel build
         uses: actions/cache@v4
         with:
@@ -300,6 +322,9 @@ jobs:
             ${{ matrix.kernel.codename }}-${{ matrix.build.type }}-
             ${{ matrix.kernel.codename }}-
 
+      # ------------------------------------------------------------------
+      # Build
+      # ------------------------------------------------------------------
       - name: Build the kernel
         run: |
           set -e
@@ -316,6 +341,9 @@ jobs:
           echo "Starting kernel build..."
           make CROSS_COMPILE="ccache ${TOOLCHAIN}" CC="ccache ${TOOLCHAIN}gcc" -j"$(nproc --all)"
 
+      # ------------------------------------------------------------------
+      # AnyKernel3 packaging
+      # ------------------------------------------------------------------
       - name: Prepare AnyKernel3 files
         run: |
           set -e
