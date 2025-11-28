@@ -99,7 +99,7 @@ jobs:
 
     steps:
       # ------------------------------------------------------------------
-      # Toolchain
+      # Toolchain (auto-detect aarch64-linux-gcc*)
       # ------------------------------------------------------------------
       - name: Download and extract GCC 14.2.0 toolchain
         run: |
@@ -108,12 +108,32 @@ jobs:
           wget https://www.kernel.org/pub/tools/crosstool/files/bin/x86_64/14.2.0/x86_64-gcc-14.2.0-nolibc-aarch64-linux.tar.gz -O toolchain.tar.gz
 
           echo "Extracting toolchain..."
-          mkdir -p toolchain
-          tar -xzf toolchain.tar.gz -C toolchain --strip-components=1
+          mkdir -p toolchain_raw
+          tar -xzf toolchain.tar.gz -C toolchain_raw
 
-          TOOLCHAIN_DIR="$GITHUB_WORKSPACE/toolchain"
-          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
-          echo "Toolchain directory: $TOOLCHAIN_DIR"
+          echo "Searching for aarch64-linux-gcc* inside extracted toolchain..."
+          GCC_CANDIDATE=$(find toolchain_raw -maxdepth 6 -type f -name 'aarch64-linux-gcc*' | head -n1 || true)
+
+          if [ -z "$GCC_CANDIDATE" ]; then
+            echo "ERROR: Could not find any aarch64-linux-gcc* binary inside toolchain_raw."
+            echo "Dumping some paths for debugging:"
+            find toolchain_raw -maxdepth 4 -type f | head -n 50
+            exit 1
+          fi
+
+          echo "Found GCC candidate: $GCC_CANDIDATE"
+
+          TOOLCHAIN_BIN_DIR=$(cd "$(dirname "$GCC_CANDIDATE")" && pwd)
+          echo "TOOLCHAIN_BIN_DIR=$TOOLCHAIN_BIN_DIR" >> $GITHUB_ENV
+
+          echo "Toolchain bin dir: $TOOLCHAIN_BIN_DIR"
+          ls "$TOOLCHAIN_BIN_DIR"
+
+          GCC_BASENAME=$(basename "$GCC_CANDIDATE")
+          if [ "$GCC_BASENAME" != "aarch64-linux-gcc" ]; then
+            echo "Creating symlink aarch64-linux-gcc -> $GCC_BASENAME"
+            ln -sf "$GCC_BASENAME" "$TOOLCHAIN_BIN_DIR/aarch64-linux-gcc"
+          fi
 
       # ------------------------------------------------------------------
       # Clone repos and set env
@@ -333,7 +353,8 @@ jobs:
           export KBUILD_BUILD_USER="ctrlpaste"
           export KBUILD_BUILD_HOST="Github"
 
-          TOOLCHAIN="${TOOLCHAIN_DIR}/bin/aarch64-linux-"
+          # Use the bin directory detected from the extracted toolchain
+          TOOLCHAIN="${TOOLCHAIN_BIN_DIR}/aarch64-linux-"
 
           echo "Using defconfig: ${{ matrix.kernel.defconfig }}"
           make CROSS_COMPILE="${TOOLCHAIN}" CC="${TOOLCHAIN}gcc" -j"$(nproc --all)" ${{ matrix.kernel.defconfig }}
