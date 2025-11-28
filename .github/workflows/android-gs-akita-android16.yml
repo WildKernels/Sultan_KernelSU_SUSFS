@@ -28,6 +28,14 @@ on:
         required: false
         default: "true"
 
+  push:
+    paths-ignore:
+      - "README.md"
+
+  pull_request:
+    paths-ignore:
+      - "README.md"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -131,6 +139,7 @@ jobs:
           ANDROID_VERSION="${{ github.event.inputs.android_version }}"
           KERNEL_VERSION="${{ github.event.inputs.kernel_version }}"
           KBRANCH="${{ github.event.inputs.kernel_branch }}"
+
           [ -z "$KBRANCH" ] && KBRANCH="android-gs-akita-android16"
 
           SUSFS_BRANCH="gki-${ANDROID_VERSION}-${KERNEL_VERSION}"
@@ -141,7 +150,7 @@ jobs:
           echo "  kernel branch  = $KBRANCH"
           echo "  SUSFS branch   = $SUSFS_BRANCH"
 
-          # AnyKernel3: we reuse your Sultan zuma branch (good Pixel AK3 template)
+          # AnyKernel3: Sultan zuma branch as template
           git clone --depth=1 "$ANYKERNEL_REPO" -b "sultan-${CODENAME}" AK3
           echo "ak3_dir=$PWD/AK3" >> $GITHUB_ENV
 
@@ -168,10 +177,9 @@ jobs:
           echo "Kernel HEAD:"
           git log -1 --oneline
 
-          # Name for output zip
           cd "$GITHUB_WORKSPACE"
           DATE="$(date +'%Y%m%d')"
-          ZIP_NAME="${DATE}-${CODENAME}${{ matrix.build.ak3_suffix }}.SUSFS_A16_AOSP-${{ github.run_number }}"
+          ZIP_NAME="${DATE}-${CODENAME}${{ matrix.build.ak3_suffix }}.SUSFS_A16_AOSP-${GITHUB_RUN_NUMBER}"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_ENV
           echo "Will produce: $ZIP_NAME.zip"
 
@@ -227,7 +235,6 @@ jobs:
             name="$(echo "$cfg" | cut -d '=' -f1)"
             echo "Enabling $cfg in $DEFCONFIG_PATH"
 
-            # Comment out any existing line for this config
             sed -i -E "s/.*($name=.*)/# \1/g" "$DEFCONFIG_PATH" || true
             printf "\n%s\n" "$cfg" >> "$DEFCONFIG_PATH"
           done
@@ -264,7 +271,6 @@ jobs:
           DEFCONFIG_PATH="arch/arm64/configs/${{ env.DEFCONFIG }}"
           echo 'CONFIG_BBG=y' >> "$DEFCONFIG_PATH"
 
-          # Inject baseband_guard into LSM default list
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' \
             security/Kconfig
 
@@ -280,7 +286,6 @@ jobs:
           echo "Integrating KernelSU variant: ${{ matrix.build.type }} (repo: ${{ matrix.build.repo }}, branch: ${{ matrix.build.branch }})"
           curl -LSs "https://raw.githubusercontent.com/${{ matrix.build.repo }}/${{ matrix.build.branch }}/kernel/setup.sh" | bash -s "${{ matrix.build.branch }}"
 
-          # Apply syscall_hooks patch for KSUN and RKSU
           if [[ "${{ matrix.build.type }}" == "KSUN" || "${{ matrix.build.type }}" == "RKSU" ]]; then
             echo "Applying syscall_hooks patch from WildKernels..."
             patch -p1 -F 3 < "${{ env.james_dir }}/sultan/syscall_hooks.patch"
@@ -290,19 +295,17 @@ jobs:
 
           DEFCONFIG_PATH="arch/arm64/configs/${{ env.DEFCONFIG }}"
 
-          # Basic KernelSU configs
           {
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_KPROBES_HOOK=n"
           } >> "$DEFCONFIG_PATH"
 
-          # RKSU usually uses manual hook
           if [[ "${{ matrix.build.type }}" == "RKSU" || "${{ matrix.build.type }}" == "KSUN" ]]; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$DEFCONFIG_PATH"
           fi
 
       # ------------------------------------------------------------------
-      # SUSFS (all variants in this workflow use SUSFS)
+      # SUSFS
       # ------------------------------------------------------------------
       - name: Apply SUSFS patches
         run: |
