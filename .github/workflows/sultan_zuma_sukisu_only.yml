@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (optional, kalau repo ini butuh)
+      - name: Checkout (kalau repo ini ada kode tambahan)
         uses: actions/checkout@v4
 
       # ------------------------------------------------------------
@@ -78,17 +78,14 @@ jobs:
           set -e
 
           CODENAME="zuma"
-          ANDROID_VERSION="android14"
-          KERNEL_VERSION="6.1"
           DEFCONFIG="zuma_defconfig"
-
           ANYKERNEL_BRANCH="sultan-${CODENAME}"
 
           # AnyKernel3 (Sultan zuma branch)
           git clone --depth 1 --branch "$ANYKERNEL_BRANCH" https://github.com/TheWildJames/AnyKernel3.git AK3
           echo "ak3_dir=$PWD/AK3" >> $GITHUB_ENV
 
-          # Optional SukiSU extra patches repo
+          # Optional SukiSU extra patches repo (kalau nanti mau dipakai)
           git clone --depth 1 https://github.com/SukiSU-Ultra/SukiSU_patch.git suki_patches
           echo "suki_dir=$PWD/suki_patches" >> $GITHUB_ENV
 
@@ -147,25 +144,22 @@ jobs:
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
 
       # ------------------------------------------------------------
-      # KernelSU - SukiSU variant (no SUSFS extra patch)
+      # KernelSU - SukiSU variant (SUSFS)
       # ------------------------------------------------------------
-      - name: Add KernelSU (SukiSU)
+      - name: Add KernelSU (SukiSU + susfs-main)
         run: |
           set -e
           cd "${{ env.kernel_dir }}"
 
-          echo "Integrating SukiSU from SukiSU-Ultra/SukiSU-Ultra (branch susfs-main)"
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/susfs-main/kernel/setup.sh" | bash -s susfs-main
+          echo "Integrating SukiSU (susfs-main) sesuai dokumentasi resmi..."
+          # Per docs: selalu pakai 'main' di URL, branch susfs di-argumenkan
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
           DEFCONFIG_PATH="arch/arm64/configs/${{ env.defconfig }}"
 
+          # Biarkan SukiSU atur hook sendiri, kita cuma pastikan KSU nyala
           {
             echo "CONFIG_KSU=y"
-            echo "CONFIG_KSU_KPROBES_HOOK=n"
-            echo "CONFIG_KSU_MANUAL_HOOK=y"
-            echo "CONFIG_KSU_MANUAL_SU=n"
-            echo "CONFIG_COMPAT=y"
-            echo "CONFIG_ZRAM_GS_WRITEBACK=y"
           } >> "$DEFCONFIG_PATH"
 
       # ------------------------------------------------------------
