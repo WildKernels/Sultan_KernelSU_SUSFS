@@ -25,7 +25,7 @@ on:
       android_version:
         required: false
         type: string
-        default: "android14"
+        default: "android16"
       kernel_version:
         required: false
         type: string
@@ -82,10 +82,10 @@ jobs:
         kernel:
           - codename: ${{ inputs.codename || 'zuma' }}
             repo: ${{ inputs.repo || 'android_kernel_google_zuma' }}
-            android_version: ${{ inputs.android_version || 'android14' }}
+            android_version: ${{ inputs.android_version || 'android16' }}
             kernel_version: ${{ inputs.kernel_version || '6.1' }}
             defconfig: zuma_defconfig
-            local_version: "-android14-11-gd7dac4b14270-ab12946699"
+            local_version: "-android16-qpr1-11-gd7dac4b14270-ab12946699"
             build_date: "Sun Apr 20 04:20:00 UTC 2025"
 
         exclude:
@@ -164,7 +164,11 @@ jobs:
           echo "james_dir=$PWD/james_patches" >> $GITHUB_ENV
 
           # Sultan kernel source (kerneltoast)
-          git clone --depth=1 https://github.com/kerneltoast/${{ matrix.kernel.repo }} sultan
+          if [[ "${{ matrix.kernel.android_version }}" == "android16" ]]; then
+             git clone --depth=1 https://android.googlesource.com/kernel/devices/google/zuma -b android-gs-akita-android16 sultan
+          else
+             git clone --depth=1 https://github.com/kerneltoast/${{ matrix.kernel.repo }} sultan
+          fi
           echo "kernel_dir=$PWD/sultan" >> $GITHUB_ENV
 
           # Decide KernelSU repo/branch per variant
@@ -282,7 +286,7 @@ jobs:
           echo "CONFIG_KSU=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           echo "CONFIG_KSU_KPROBES_HOOK=n" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
 
-          if [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
+          if [[ "${{ matrix.build.type }}" == "RKSU" || "${{ matrix.build.type }}" == "KSUN" ]]; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           fi
 
