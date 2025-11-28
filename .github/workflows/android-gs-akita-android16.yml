@@ -1,4 +1,4 @@
-name: AOSP Zuma A16 KSU + SUSFS (no SukiSU)
+name: AOSP Zuma A16 KSU
 
 permissions:
   contents: read
