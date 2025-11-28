@@ -1,4 +1,4 @@
-# Sukisu Kernels for Android
+# Sukisu Kernels for Zuma
 
 Personal use only
 
