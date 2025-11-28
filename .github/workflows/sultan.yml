@@ -5,8 +5,14 @@ permissions:
   actions: read
 
 on:
-  workflow_dispatch:
-  workflow_call:
+  workflow_dispatch:        # manual run from Actions tab
+  push:                     # auto run on push
+    paths-ignore:
+      - "README.md"
+  pull_request:             # auto run on PR
+    paths-ignore:
+      - "README.md"
+  workflow_call:            # can still be reusable from other workflows
     inputs:
       codename:
         required: false
@@ -24,6 +30,7 @@ on:
         required: false
         type: string
         default: "6.1"
+
 
 jobs:
   build:
