@@ -219,7 +219,7 @@ jobs:
           echo "CONFIG_KSU=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           echo "CONFIG_KSU_KPROBES_HOOK=n" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
 
-          if [[ "${{ matrix.build.type }}" == "RKSU" ]]; then
+          if [[ "${{ matrix.build.type }}" == "RKSU" || "${{ matrix.build.type }}" == "KSUN" ]]; then
             echo "CONFIG_KSU_MANUAL_HOOK=y" >> "arch/arm64/configs/${{ matrix.kernel.defconfig }}"
           fi
 
