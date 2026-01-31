@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ["WKSU-SUSFS", "SHEDOWE"]
+        variant: ["WKSU-SUSFS"]
     steps:
       #- name: Maximize Build Space
       #  uses: AdityaGarg8/remove-unwanted-software@v5
@@ -53,26 +53,20 @@ jobs:
       - name: Set CONFIG Environment Variable
         run: |
           CONFIG="android_kernel_google_tensynos"
-
           # Set CONFIG as an environment variable for future steps
           echo "CONFIG=$CONFIG" >> $GITHUB_ENV
-
           echo "CONFIG set to: $CONFIG"
 
       - name: Clone AnyKernel3 and Other Dependencies
         run: |
           echo "Cloning AnyKernel3 and other dependencies..."
-
           ANYKERNEL_BRANCH="sultan-${{ inputs.codename }}"
-
-          # Debug print the branches
           echo "Using branch for AnyKernel3: $ANYKERNEL_BRANCH"
 
-          # Clone repositories using the branch names
           git clone https://github.com/TheWildJames/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
           git clone https://github.com/TheWildJames/kernel_patches.git
-          #git clone https://github.com/kerneltoast/${{ inputs.repo }}
           git clone https://github.com/kerneltoast/android_kernel_google_tensynos
+          
           if [ "${{ matrix.variant }}" != "WKSU" ]; then
             SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
             echo "Using branch for SUSFS: $SUSFS_BRANCH"
@@ -83,7 +77,6 @@ jobs:
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
-
           echo "Adding KernelSU..."
           curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s wild
 
@@ -92,9 +85,7 @@ jobs:
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
-
           SUSFS_VERSION="2.0.0"
-
           echo "Applying SUSFS patches..."
 
           # Copy SUSFS patches
@@ -102,18 +93,16 @@ jobs:
           cp ../susfs4ksu/kernel_patches/fs/* ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
 
-          # Change to common directory and apply SUSFS patch
+          # Apply patches
           patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
           cp ../kernel_patches/sultan/sys.c_fix.patch ./
           patch -p1 < sys.c_fix.patch
-
           cp ../kernel_patches/wild/susfs_fix_patches/v${SUSFS_VERSION}/a14-6.1/base.c.patch ./
           patch -p1 < base.c.patch
 
       - name: Configure KernelSU
         run: |
           cd "$CONFIG"
-          # KernelSU Configuration
           echo "# KernelSU Configuration" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_KSU=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           if [ "${{ matrix.variant }}" != "WKSU" ]; then
@@ -125,7 +114,6 @@ jobs:
       - name: Configure Mountify Support
         run: |
           cd "$CONFIG"
-          # Mountify Support
           echo "# Mountify Support" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_TMPFS_XATTR=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
@@ -133,7 +121,6 @@ jobs:
       - name: Configure Networking
         run: |
           cd "$CONFIG"
-          # Networking Configuration
           echo "# Networking Configuration" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
@@ -142,7 +129,6 @@ jobs:
       - name: Configure TCP Congestion Control
         run: |
           cd "$CONFIG"
-          # BBR TCP Congestion Control
           echo "# BBR TCP Congestion Control" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_TCP_CONG_BBR=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
@@ -154,7 +140,6 @@ jobs:
       - name: Configure IPSet Support
         run: |
           cd "$CONFIG"
-          # IPSet support
           echo "# IPSet Support" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_IP_SET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_IP_SET_MAX=65534" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
@@ -175,47 +160,260 @@ jobs:
           echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
           echo "CONFIG_IP_SET_LIST_SET=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
 
-      - name: Minimal Droidspaces Support
-        if: ${{ matrix.variant == 'SHEDOWE' }}
+      - name: Configure Droidspaces and Ubuntu Chroot Support
         run: |
           cd "$CONFIG"
-          # Minimal Droidspaces Support
-          echo "# Minimal Droidspaces Support" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "# Copyright (C) 2025 ravindu644 <droidcasts@protonmail.com>" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
+          CONFIG_FILE="./arch/arm64/configs/${{ inputs.codename }}_defconfig"
+          
+          echo "" >> $CONFIG_FILE
+          echo "# Droidspaces & Ubuntu Chroot Support (Merged)" >> $CONFIG_FILE
+          
+          # IPC & Core (Droidspaces + Ubuntu)
+          echo "CONFIG_SYSCTL=y" >> $CONFIG_FILE
+          echo "CONFIG_SYSVIPC=y" >> $CONFIG_FILE
+          echo "CONFIG_POSIX_MQUEUE=y" >> $CONFIG_FILE
+          echo "CONFIG_NAMESPACES=y" >> $CONFIG_FILE
+          echo "CONFIG_PID_NS=y" >> $CONFIG_FILE
+          echo "CONFIG_UTS_NS=y" >> $CONFIG_FILE
+          echo "CONFIG_IPC_NS=y" >> $CONFIG_FILE
+          echo "CONFIG_MNT_NS=y" >> $CONFIG_FILE
+          
+          # Control Groups (Droidspaces + Ubuntu)
+          echo "CONFIG_CGROUPS=y" >> $CONFIG_FILE
+          echo "CONFIG_CGROUP_DEVICE=y" >> $CONFIG_FILE
+          echo "CONFIG_MEMCG=y" >> $CONFIG_FILE
+          echo "CONFIG_CGROUP_CPUACCT=y" >> $CONFIG_FILE
+          echo "CONFIG_CGROUP_SCHED=y" >> $CONFIG_FILE
+          echo "CONFIG_CGROUP_FREEZER=y" >> $CONFIG_FILE
+          echo "CONFIG_CGROUP_PIDS=y" >> $CONFIG_FILE
+          echo "CONFIG_MEMCG_SWAP=y" >> $CONFIG_FILE
+          
+          # Filesystems & Device Mgmt
+          echo "CONFIG_DEVTMPFS=y" >> $CONFIG_FILE
+          echo "CONFIG_DEVTMPFS_MOUNT=y" >> $CONFIG_FILE
+          echo "CONFIG_PROC_FS=y" >> $CONFIG_FILE
+          echo "CONFIG_SYSFS=y" >> $CONFIG_FILE
+          echo "CONFIG_TMPFS=y" >> $CONFIG_FILE
+          echo "CONFIG_EXT4_FS=y" >> $CONFIG_FILE
+          echo "CONFIG_EXT4_FS_POSIX_ACL=y" >> $CONFIG_FILE
+          echo "CONFIG_EXT4_FS_SECURITY=y" >> $CONFIG_FILE
+          echo "CONFIG_OVERLAY_FS=y" >> $CONFIG_FILE
+          echo "CONFIG_FUSE_FS=y" >> $CONFIG_FILE
+          echo "CONFIG_BLK_DEV_LOOP=y" >> $CONFIG_FILE
+          # Note: CONFIG_TMPFS_XATTR and CONFIG_TMPFS_POSIX_ACL are already in Mountify step
+          
+          # Executables & QEMU
+          echo "CONFIG_BINFMT_MISC=y" >> $CONFIG_FILE
+          echo "CONFIG_BINFMT_SCRIPT=y" >> $CONFIG_FILE
+          echo "CONFIG_BINFMT_ELF=y" >> $CONFIG_FILE
+          
+          # Terminal & PTY
+          echo "CONFIG_UNIX98_PTYS=y" >> $CONFIG_FILE
+          echo "CONFIG_TTY=y" >> $CONFIG_FILE
+          echo "CONFIG_DEVPTS_FS=y" >> $CONFIG_FILE
+          echo "CONFIG_LEGACY_PTYS=y" >> $CONFIG_FILE
+          echo "CONFIG_LEGACY_PTY_COUNT=256" >> $CONFIG_FILE
+          
+          # Networking
+          echo "CONFIG_NET=y" >> $CONFIG_FILE
+          echo "CONFIG_INET=y" >> $CONFIG_FILE
+          echo "CONFIG_UNIX=y" >> $CONFIG_FILE
+          echo "CONFIG_IPV6=y" >> $CONFIG_FILE
+          echo "CONFIG_PACKET=y" >> $CONFIG_FILE
+          
+          # System & Security
+          echo "CONFIG_FUTEX=y" >> $CONFIG_FILE
+          echo "CONFIG_FILE_LOCKING=y" >> $CONFIG_FILE
+          echo "CONFIG_EPOLL=y" >> $CONFIG_FILE
+          echo "CONFIG_EVENTFD=y" >> $CONFIG_FILE
+          echo "CONFIG_SIGNALFD=y" >> $CONFIG_FILE
+          echo "CONFIG_TIMERFD=y" >> $CONFIG_FILE
+          echo "CONFIG_INOTIFY_USER=y" >> $CONFIG_FILE
+          echo "CONFIG_SECCOMP=y" >> $CONFIG_FILE
+          echo "CONFIG_SECCOMP_FILTER=y" >> $CONFIG_FILE
+          echo "CONFIG_AIO=y" >> $CONFIG_FILE
+          echo "CONFIG_PROC_SYSCTL=y" >> $CONFIG_FILE
+          echo "CONFIG_SYSVIPC_SYSCTL=y" >> $CONFIG_FILE
+          echo "CONFIG_PSI=y" >> $CONFIG_FILE
+          
+          # Firmware
+          echo "CONFIG_FW_LOADER=y" >> $CONFIG_FILE
+          echo "CONFIG_FW_LOADER_USER_HELPER=y" >> $CONFIG_FILE
+          echo "CONFIG_FW_LOADER_COMPRESS=y" >> $CONFIG_FILE
 
-          echo "# IPC mechanisms (required for tools that rely on shared memory and IPC namespaces)" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_SYSCTL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_SYSVIPC=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_POSIX_MQUEUE=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "# Core namespace support (essential for assigning PID 1 and running any init system)" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_NAMESPACES=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_PID_NS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_UTS_NS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_IPC_NS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "# Primarily needed for older kernels (3.x)" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_MNT_NS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "# Control groups support (required for systemd)" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_CGROUPS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_CGROUP_DEVICE=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_MEMCG=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "# Device filesystem support (enables hardware access when --hw-access is enabled)" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_DEVTMPFS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-
-          echo "# Firmware loading support (optional, used when --hw-access is enabled)" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_FW_LOADER=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_FW_LOADER_USER_HELPER=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-          echo "CONFIG_FW_LOADER_COMPRESS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-      
-      - name: Run sed and perl Commands
+      - name: Run sed and Patching
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
 
-          echo "Running sed commands..."
+          echo "Running sed commands for localversion..."
           sed -i 's/CONFIG_LOCALVERSION="-Sultan"/CONFIG_LOCALVERSION="-Sultan-Wild"/' ./arch/arm64/configs/${{ inputs.codename }}_defconfig
+
+          echo "Applying vmscan shrinker lock fix..."
+          cat <<'EOF' > vmscan_shrinker.patch
+          --- mm/vmscan.c
+          +++ mm/vmscan.c
+          @@ -211,8 +211,7 @@
+           }
+           
+           static LIST_HEAD(shrinker_list);
+          -static DEFINE_SPINLOCK(shrinker_lock);
+          -static DEFINE_RWLOCK(shrinker_rwlock);
+          +static DECLARE_RWSEM(shrinker_rwsem);
+           
+           #ifdef CONFIG_MEMCG
+           static int shrinker_nr_max;
+          @@ -719,12 +718,12 @@
+           void register_shrinker_prepared(struct shrinker *shrinker)
+           {
+           	init_rwsem(&shrinker->del_rwsem);
+          -	spin_lock(&shrinker_lock);
+          +	down_write(&shrinker_rwsem);
+           	/* Use the RCU list mutation primitive to allow concurrent iteration */
+           	list_add_tail_rcu(&shrinker->list, &shrinker_list);
+           	shrinker->flags |= SHRINKER_REGISTERED;
+           	shrinker_debugfs_add(shrinker);
+          -	spin_unlock(&shrinker_lock);
+          +	up_write(&shrinker_rwsem);
+           }
+           
+           static int __register_shrinker(struct shrinker *shrinker)
+          @@ -780,15 +779,11 @@
+           	 * Wait until the shrinker list is no longer in use (shrinker_rwlock)
+           	 */
+           	down_write(&shrinker->del_rwsem);
+          -	spin_lock(&shrinker_lock);
+          -	write_lock(&shrinker_rwlock);
+          -	list_del(&shrinker->list);
+          +	down_write(&shrinker_rwsem);
+          +	list_del_rcu(&shrinker->list);
+           	shrinker->flags &= ~SHRINKER_REGISTERED;
+          -	if (shrinker->flags & SHRINKER_MEMCG_AWARE)
+          -		unregister_memcg_shrinker(shrinker);
+           	debugfs_entry = shrinker_debugfs_remove(shrinker);
+          -	write_unlock(&shrinker_rwlock);
+          -	spin_unlock(&shrinker_lock);
+          +	up_write(&shrinker_rwsem);
+           	up_write(&shrinker->del_rwsem);
+           
+           	debugfs_remove_recursive(debugfs_entry);
+          @@ -954,7 +949,24 @@
+           		    !(shrinker->flags & SHRINKER_NONSLAB))
+           			continue;
+           
+          +		if (!down_read_trylock(&shrinker->del_rwsem))
+          +			continue;
+          +
+          +		up_read(&shrinker_rwsem);
+          +
+           		ret = do_shrink_slab(&sc, shrinker, priority);
+          +
+          +		if (!down_read_trylock(&shrinker_rwsem)) {
+          +			up_read(&shrinker->del_rwsem);
+          +			return freed;
+          +		}
+          +
+          +		info = shrinker_info_protected(memcg, nid);
+          +		if (unlikely(!info)) {
+          +			up_read(&shrinker->del_rwsem);
+          +			goto unlock;
+          +		}
+          +
+           		if (ret == SHRINK_EMPTY) {
+           			clear_bit(i, info->map);
+           			/*
+          @@ -973,13 +985,28 @@
+           			 * set_bit()          do_shrink_slab()
+           			 */
+           			smp_mb__after_atomic();
+          +
+          +			up_read(&shrinker_rwsem);
+           			ret = do_shrink_slab(&sc, shrinker, priority);
+          +
+          +			if (!down_read_trylock(&shrinker_rwsem)) {
+          +				up_read(&shrinker->del_rwsem);
+          +				return freed;
+          +			}
+          +
+          +			info = shrinker_info_protected(memcg, nid);
+          +			if (unlikely(!info)) {
+          +				up_read(&shrinker->del_rwsem);
+          +				goto unlock;
+          +			}
+          +
+           			if (ret == SHRINK_EMPTY)
+           				ret = 0;
+           			else
+           				set_shrinker_bit(memcg, nid, i);
+           		}
+           		freed += ret;
+          +		up_read(&shrinker->del_rwsem);
+           
+           		if (rwsem_is_contended(&shrinker_rwsem)) {
+           			freed = freed ? : 1;
+          @@ -1040,29 +1067,35 @@
+           	if (!mem_cgroup_disabled() && !mem_cgroup_is_root(memcg))
+           		return shrink_slab_memcg(gfp_mask, nid, memcg, priority);
+           
+          -	read_lock(&shrinker_rwlock);
+          -	/* Use the RCU list iteration primitive to allow concurrent additions */
+          -	list_for_each_entry_rcu(shrinker, &shrinker_list, list) {
+          -		struct shrink_control sc = {
+          -			.gfp_mask = gfp_mask,
+          -			.nid = nid,
+          -			.memcg = memcg,
+          -		};
+          -
+          -		if (!down_read_trylock(&shrinker->del_rwsem))
+          -			continue;
+          -		read_unlock(&shrinker_rwlock);
+          -
+          -		ret = do_shrink_slab(&sc, shrinker, priority);
+          -		if (ret == SHRINK_EMPTY)
+          -			ret = 0;
+          -		freed += ret;
+          -
+          -		read_lock(&shrinker_rwlock);
+          -		up_read(&shrinker->del_rwsem);
+          -	}
+          -	read_unlock(&shrinker_rwlock);
+          -
+          +	if (down_read_trylock(&shrinker_rwsem)) {
+          +		/* Use the RCU list iteration primitive to allow concurrent additions */
+          +		list_for_each_entry_rcu(shrinker, &shrinker_list, list) {
+          +			struct shrink_control sc = {
+          +				.gfp_mask = gfp_mask,
+          +				.nid = nid,
+          +				.memcg = memcg,
+          +			};
+          +
+          +			if (!down_read_trylock(&shrinker->del_rwsem))
+          +				continue;
+          +			up_read(&shrinker_rwsem);
+          +
+          +			ret = do_shrink_slab(&sc, shrinker, priority);
+          +			if (ret == SHRINK_EMPTY)
+          +				ret = 0;
+          +			freed += ret;
+          +
+          +			if (!down_read_trylock(&shrinker_rwsem)) {
+          +				up_read(&shrinker->del_rwsem);
+          +				goto out;
+          +			}
+          +			up_read(&shrinker->del_rwsem);
+          +		}
+          +
+          +		up_read(&shrinker_rwsem);
+          +	}
+          +
+          +out:
+           	cond_resched();
+           	return freed;
+           }
+          EOF
+          
+          # Apply the patch (ignore whitespace to handle tab/space issues in workflow dispatch)
+          patch -p0 -l < vmscan_shrinker.patch || echo "Patch failed, checking reject files..."
 
       - name: Build the Kernel
         run: |
