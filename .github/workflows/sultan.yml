@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["stock", "wksu-susfs"]
+        features: ["stock", "ksun-susfs"]
     steps:
       #- name: Maximize Build Space
       #  uses: AdityaGarg8/remove-unwanted-software@v5
@@ -73,7 +73,7 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
 
       - name: Add KernelSU
-        if: contains(matrix.features, 'wksu')
+        if: contains(matrix.features, 'ksun')
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
@@ -88,6 +88,7 @@ jobs:
           cd susfs4ksu
           patch -p1 < "${{ github.workspace }}/kernel_patches/pershoot/susfs4ksu/0001-pershoot-Allow-core-to-be-built-with-no-features.patch"
           patch -p1 < "${{ github.workspace }}/kernel_patches/pershoot/susfs4ksu/0002-pershoot-Implement-SuSFS-and-Toolkit-coexistence.patch"
+          cd ..
 
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
@@ -110,7 +111,7 @@ jobs:
           patch -p1 < ../kernel_patches/sultan/sys.c_fix.patch
 
       - name: Configure KernelSU
-        if: contains(matrix.features, 'wksu')
+        if: contains(matrix.features, 'ksun')
         run: |
           cd "$CONFIG"
           # KernelSU Configuration
@@ -125,7 +126,7 @@ jobs:
           fi
 
       - name: Configure Mountify Support
-        if: matrix.features == 'wksu-susfs'
+        if: matrix.features == 'ksun-susfs'
         run: |
           cd "$CONFIG"
           # Mountify Support
@@ -189,7 +190,7 @@ jobs:
           EOF
 
       - name: Run sed and perl Commands
-        if: matrix.features == 'wksu-susfs'
+        if: matrix.features == 'ksun-susfs'
         run: |
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
