@@ -71,8 +71,6 @@ jobs:
           git clone https://github.com/WildKernels/android_kernel_google_tensynos --depth=1
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-          cd susfs4ksu
-          git checkout ef16cbce5c5195988b9b630de85466148cbbcdef
 
       - name: Add KernelSU
         if: contains(matrix.features, 'wksu')
