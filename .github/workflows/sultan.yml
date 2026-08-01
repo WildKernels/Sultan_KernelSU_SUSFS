@@ -81,7 +81,7 @@ jobs:
           cd "$CONFIG"
 
           echo "Adding KernelSU..."
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s 293ca016cf7196c2e96403a929ea3f464fd3568b
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
 
       - name: Apply SUSFS Patches
         if: contains(matrix.features, 'susfs')
