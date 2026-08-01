@@ -99,23 +99,17 @@ jobs:
           echo "Applying SUSFS patches..."
 
           # Copy SUSFS patches
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch ./
           cp ../susfs4ksu/kernel_patches/fs/* ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
 
           perl -0pi -e 's/if \(IS_ERR\(f\) && !libperfmgr_redirect\(&f, dfd, tmp, &op, how\)\) \{/if (IS_ERR(f)) {/g' fs/open.c
 
-          # Change to common directory and apply SUSFS patch
-          patch -p1 < 50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
+          # Apply SUSFS patch
+          patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch || true
 
           perl -0pi -e 's/if \(IS_ERR\(f\)\) \{/if (IS_ERR(f) && !libperfmgr_redirect(&f, dfd, tmp, &op, how)) {/g' fs/open.c
           
-          cp ../kernel_patches/sultan/sys.c_fix.patch ./
-          patch -p1 < sys.c_fix.patch
-
-          cd KernelSU-Next
-          cp ${{ github.workspace }}/kernel_patches/wild/ksun-293ca01-susfs-v2.1.0-a14-6.1-ef16cbce.patch ./
-          patch -p1 < ksun-293ca01-susfs-v2.1.0-a14-6.1-ef16cbce.patch
+          patch -p1 < ../kernel_patches/sultan/sys.c_fix.patch
 
       - name: Configure KernelSU
         if: contains(matrix.features, 'wksu')
@@ -129,8 +123,7 @@ jobs:
           else
             echo "CONFIG_KSU_MANUAL_HOOKS=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
             echo "CONFIG_KSU_SUSFS=n" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
-            cp ../kernel_patches/wild/hooks/69_pure_manual_hooks_only.patch ./
-            patch -p1 < 69_pure_manual_hooks_only.patch
+            patch -p1 < ../kernel_patches/wild/hooks/69_pure_manual_hooks_only.patch
           fi
 
       - name: Configure Mountify Support
