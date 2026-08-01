@@ -134,7 +134,6 @@ jobs:
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./arch/arm64/configs/${{ inputs.codename }}_defconfig
 
       - name: Configure Networking
-        if: false
         run: |
           cd "$CONFIG"
           # Networking Configuration
@@ -145,7 +144,6 @@ jobs:
 
       - name: Add IP SET & IPv6_NAT Support
         shell: bash
-        if: false
         run: |
           cd "$CONFIG"
           cat >> "./arch/arm64/configs/${{ inputs.codename }}_defconfig" << 'EOF'
@@ -175,7 +173,6 @@ jobs:
 
       - name: Apply TCP Congestion Control
         shell: bash
-        if: false
         run: |
           cd "$CONFIG"
           cat >> "./arch/arm64/configs/${{ inputs.codename }}_defconfig" << 'EOF'
