@@ -86,6 +86,11 @@ jobs:
       - name: Apply SUSFS Patches
         if: contains(matrix.features, 'susfs')
         run: |
+          # Apply pershoot susfs4ksu coexistence patches
+          cd susfs4ksu
+          patch -p1 < "${{ github.workspace }}/kernel_patches/pershoot/susfs4ksu/0001-pershoot-Allow-core-to-be-built-with-no-features.patch"
+          patch -p1 < "${{ github.workspace }}/kernel_patches/pershoot/susfs4ksu/0002-pershoot-Implement-SuSFS-and-Toolkit-coexistence.patch"
+
           echo "Changing to configuration directory: $CONFIG..."
           cd "$CONFIG"
 
